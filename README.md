@@ -7,6 +7,7 @@ Simple Python packet sniffer that uses Scapy to capture traffic, summarize packe
 - `sniffer.py` starts packet capture and routes packets to the analysis classes.
 - `stats_manager.py` tracks protocol, IP, and port statistics.
 - `scan_detector.py` detects possible port scans from repeated SYN packets across multiple destination ports.
+- `event_manager.py` stores security events and prints them in a readable format.
 
 ## Requirements
 
