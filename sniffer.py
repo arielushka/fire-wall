@@ -13,6 +13,7 @@ stats = StatsManager()
 scan_detector = ScanDetector()
 events = EventManager()
 firewall = FirewallManager()
+firewall.load_default_rules()
 
 
 def handle_packet(packet):
@@ -37,6 +38,9 @@ def handle_packet(packet):
     if firewall_result["action"] == "BLOCK":
         events.add_event(build_firewall_event(packet_info, firewall_result))
     else:
+        if firewall_result["action"] == "ALERT":
+            events.add_event(build_firewall_event(packet_info, firewall_result))
+
         event = detect_security_event(packet_info)
         if event:
             events.add_event(event)
@@ -103,9 +107,11 @@ def detect_security_event(packet_info):
 
 
 def build_firewall_event(packet_info, firewall_result):
+    action = firewall_result["action"]
+
     return {
-        "type": "Firewall Block",
-        "severity": "MEDIUM",
+        "type": f"Firewall {action.title()}",
+        "severity": firewall_result["severity"],
         "src_ip": packet_info["src_ip"],
         "dst_ip": packet_info["dst_ip"],
         "message": firewall_result["reason"],
