@@ -3,7 +3,7 @@ import time
 
 class ScanDetector:
     def __init__(self, port_threshold=8, time_window=10):
-        # Tracks destination ports per source/destination IP pair.
+        # For each pair of computers, remember which destination ports were tried.
         self.scan_tracker = {}
         self.alerted_scanners = set()
         self.port_threshold = port_threshold
@@ -20,28 +20,29 @@ class ScanDetector:
         # Keep only recent ports so old traffic does not trigger alerts.
         self.remove_old_ports(src_dst_pair, current_time)
 
-        scanned_ports = self.scan_tracker[src_dst_pair]
-        if len(scanned_ports) < self.port_threshold:
+        recent_ports = self.scan_tracker[src_dst_pair]
+        if len(recent_ports) < self.port_threshold:
             return None
 
         if src_dst_pair in self.alerted_scanners:
             return None
 
         self.alerted_scanners.add(src_dst_pair)
-        # Return a dictionary so EventManager controls how alerts are printed.
+
+        # EventManager will add the time and print this nicely.
         return {
             "type": "Port Scan",
             "severity": "HIGH",
             "src_ip": src_ip,
             "dst_ip": dst_ip,
             "message": (
-                f"Tried {len(scanned_ports)} different destination ports "
+                f"Tried {len(recent_ports)} different destination ports "
                 f"in {self.time_window} seconds"
             ),
             "details": {
                 "src_port": src_port,
                 "packet_size": packet_size,
-                "ports": sorted(scanned_ports.keys()),
+                "ports": sorted(recent_ports.keys()),
                 "threshold": self.port_threshold,
                 "time_window": self.time_window,
             },

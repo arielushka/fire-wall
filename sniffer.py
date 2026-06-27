@@ -6,7 +6,7 @@ from scan_detector import ScanDetector
 from stats_manager import StatsManager
 
 PACKET_COUNT = 200
-SUMMARY_INTERVAL = 100
+SUMMARY_INTERVAL = 200
 
 # Shared managers keep the packet handler small and focused.
 stats = StatsManager()
@@ -20,7 +20,7 @@ def handle_packet(packet):
     # Scapy calls this function once for every captured packet.
     packet_info = parse_packet(packet)
 
-    # Update the counters first so summaries always include every packet.
+    # Keep the normal traffic statistics, even if the packet is later blocked.
     stats.update_protocol(packet_info["protocol"])
 
     if packet_info["src_ip"] and packet_info["dst_ip"]:
@@ -34,19 +34,27 @@ def handle_packet(packet):
     if packet_info["dst_port"] is not None:
         stats.update_dst_port(packet_info["dst_port"])
 
+    # The firewall runs before the scan detector.
+    # Blocked packets should not be used for port-scan detection.
     firewall_result = firewall.check_packet(packet_info)
-    if firewall_result["action"] == "BLOCK":
-        events.add_event(build_firewall_event(packet_info, firewall_result))
-    else:
-        if firewall_result["action"] == "ALERT":
-            events.add_event(build_firewall_event(packet_info, firewall_result))
+    firewall_action = firewall_result["action"]
 
-        event = detect_security_event(packet_info)
-        if event:
-            events.add_event(event)
+    if firewall_action == "BLOCK":
+        events.add_event(build_firewall_event(packet_info, firewall_result))
+    elif firewall_action == "ALERT":
+        events.add_event(build_firewall_event(packet_info, firewall_result))
+        detect_and_save_security_event(packet_info)
+    else:
+        detect_and_save_security_event(packet_info)
 
     if stats.get_total_packets() % SUMMARY_INTERVAL == 0:
         stats.print_summary()
+
+
+def detect_and_save_security_event(packet_info):
+    event = detect_security_event(packet_info)
+    if event:
+        events.add_event(event)
 
 
 def parse_packet(packet):
@@ -70,7 +78,6 @@ def parse_packet(packet):
     packet_info["protocol"] = "Other IP"
 
     if TCP in packet:
-
         packet_info["protocol"] = "TCP"
         packet_info["src_port"] = packet[TCP].sport
         packet_info["dst_port"] = packet[TCP].dport
@@ -109,6 +116,7 @@ def detect_security_event(packet_info):
 def build_firewall_event(packet_info, firewall_result):
     action = firewall_result["action"]
 
+    # EventManager prints and stores this the same way it handles scan alerts.
     return {
         "type": f"Firewall {action.title()}",
         "severity": firewall_result["severity"],

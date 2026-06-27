@@ -2,6 +2,8 @@ import ipaddress
 
 
 class FirewallManager:
+    # Each port has a service name and a default severity.
+    # This makes the printed messages easier to understand.
     DEFAULT_BLOCKED_DST_PORTS = {
         21: ("FTP", "MEDIUM"),
         23: ("Telnet", "MEDIUM"),
@@ -14,14 +16,21 @@ class FirewallManager:
     SENSITIVE_DST_PORTS = {445, 3389}
 
     def __init__(self):
+        # Source means "where the packet came from".
+        # Destination means "where the packet is going".
         self.blocked_src_ips = set()
         self.blocked_dst_ips = set()
         self.blocked_src_ports = set()
         self.blocked_dst_ports = set()
         self.blocked_protocols = set()
         self.alerted_dst_ports = set()
+
+        # Example rule: block 1.2.3.4 -> 8.8.8.8:445
         self.blocked_src_ip_dst_ip_dst_ports = set()
+
         self.max_packet_size = 1500
+
+        # These counters help us print a simple firewall summary.
         self.allowed_count = 0
         self.blocked_count = 0
         self.alert_count = 0
@@ -62,6 +71,8 @@ class FirewallManager:
         self.blocked_src_ip_dst_ip_dst_ports.add((src_ip, dst_ip, dst_port))
 
     def check_packet(self, packet_info):
+        # First decide what the firewall thinks about this packet.
+        # Then save the result in the counters.
         result = self.evaluate_packet(packet_info)
         self.record_result(result)
         return result
@@ -75,48 +86,56 @@ class FirewallManager:
         packet_size = packet_info["packet_size"]
         src_dst_port_rule = (src_ip, dst_ip, dst_port)
 
+        # Exact IP rules are checked first because they are very specific.
         if src_ip in self.blocked_src_ips:
-            return self.build_result("BLOCK", f"Blocked source IP: {src_ip}", "HIGH")
+            reason = f"Blocked source IP: {src_ip}"
+            return self.build_result("BLOCK", reason, "HIGH")
 
         if dst_ip in self.blocked_dst_ips:
-            return self.build_result("BLOCK", f"Blocked destination IP: {dst_ip}", "HIGH")
+            reason = f"Blocked destination IP: {dst_ip}"
+            return self.build_result("BLOCK", reason, "HIGH")
 
         if src_dst_port_rule in self.blocked_src_ip_dst_ip_dst_ports:
-            return self.build_result(
-                "BLOCK",
-                f"Blocked flow rule: {src_ip} -> {dst_ip}:{dst_port}",
-                "HIGH",
-            )
+            reason = f"Blocked flow rule: {src_ip} -> {dst_ip}:{dst_port}"
+            return self.build_result("BLOCK", reason, "HIGH")
 
-        if self.is_public_ip(src_ip) and protocol == "TCP" and dst_port in self.SENSITIVE_DST_PORTS:
+        is_sensitive_service = dst_port in self.SENSITIVE_DST_PORTS
+        is_tcp = protocol == "TCP"
+        is_public_source = self.is_public_ip(src_ip)
+
+        if is_public_source and is_tcp and is_sensitive_service:
             service_name = self.get_service_name(dst_port)
-            return self.build_result(
-                "BLOCK",
-                f"Public source IP accessing sensitive service {service_name}: {dst_port}",
-                "HIGH",
+            reason = (
+                f"Public source IP accessing sensitive service "
+                f"{service_name}: {dst_port}"
             )
+            return self.build_result("BLOCK", reason, "HIGH")
 
         if protocol in self.blocked_protocols:
-            severity = "LOW" if protocol == "ICMP" else "MEDIUM"
-            return self.build_result("BLOCK", f"Blocked protocol: {protocol}", severity)
+            severity = "MEDIUM"
+            if protocol == "ICMP":
+                severity = "LOW"
+
+            reason = f"Blocked protocol: {protocol}"
+            return self.build_result("BLOCK", reason, severity)
 
         if src_port in self.blocked_src_ports:
-            return self.build_result("BLOCK", f"Blocked source port: {src_port}", "MEDIUM")
+            reason = f"Blocked source port: {src_port}"
+            return self.build_result("BLOCK", reason, "MEDIUM")
 
         if dst_port in self.blocked_dst_ports:
             service_name = self.get_service_name(dst_port)
             severity = self.get_dst_port_severity(dst_port)
-            return self.build_result(
-                "BLOCK",
-                f"Blocked destination port: {dst_port} ({service_name})",
-                severity,
-            )
+            reason = f"Blocked destination port: {dst_port} ({service_name})"
+            return self.build_result("BLOCK", reason, severity)
 
+        # ALERT means suspicious, but still let the packet continue.
         if packet_size > self.max_packet_size:
             return self.build_result("ALERT", "Oversized packet", "MEDIUM")
 
         if dst_port in self.alerted_dst_ports:
-            return self.build_result("ALERT", f"Suspicious destination port: {dst_port}", "LOW")
+            reason = f"Suspicious destination port: {dst_port}"
+            return self.build_result("ALERT", reason, "LOW")
 
         return self.build_result("ALLOW", "No firewall rule matched", "LOW")
 
@@ -133,10 +152,12 @@ class FirewallManager:
 
         if action == "BLOCK":
             self.blocked_count += 1
-            self.blocked_reasons[reason] = self.blocked_reasons.get(reason, 0) + 1
+            old_count = self.blocked_reasons.get(reason, 0)
+            self.blocked_reasons[reason] = old_count + 1
         elif action == "ALERT":
             self.alert_count += 1
-            self.alert_reasons[reason] = self.alert_reasons.get(reason, 0) + 1
+            old_count = self.alert_reasons.get(reason, 0)
+            self.alert_reasons[reason] = old_count + 1
         else:
             self.allowed_count += 1
 
@@ -159,6 +180,7 @@ class FirewallManager:
         try:
             address = ipaddress.ip_address(ip)
         except ValueError:
+            # If the IP text is broken, do not treat it as public.
             return False
 
         return address.is_global
@@ -224,9 +246,6 @@ class FirewallManager:
             print("None.")
             return
 
-        for reason, count in sorted(
-            reasons.items(),
-            key=lambda item: item[1],
-            reverse=True,
-        ):
+        # No fancy sorting here. Just show each reason and how often it happened.
+        for reason, count in reasons.items():
             print(f"{count:>6}  {reason}")

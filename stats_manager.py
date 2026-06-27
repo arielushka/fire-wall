@@ -1,5 +1,5 @@
 class StatsManager:
-    # Common port names used when printing the top destination ports.
+    # A small service list makes the port output easier to read.
     SERVICES = {
         20: "FTP Data",
         21: "FTP",
@@ -43,14 +43,17 @@ class StatsManager:
         self.dst_counts[dst_ip] = self.dst_counts.get(dst_ip, 0) + 1
 
     def update_src_port(self, src_port):
-        self.src_port_counts[src_port] = self.src_port_counts.get(src_port, 0) + 1
+        old_count = self.src_port_counts.get(src_port, 0)
+        self.src_port_counts[src_port] = old_count + 1
 
     def update_dst_port(self, dst_port):
-        self.dst_port_counts[dst_port] = self.dst_port_counts.get(dst_port, 0) + 1
+        old_count = self.dst_port_counts.get(dst_port, 0)
+        self.dst_port_counts[dst_port] = old_count + 1
 
     def update_packet_size(self, packet_size):
         self.total_bytes += packet_size
 
+        # The first packet becomes both the smallest and largest at first.
         if self.smallest_packet is None or packet_size < self.smallest_packet:
             self.smallest_packet = packet_size
 
@@ -86,7 +89,7 @@ class StatsManager:
         if total == 0:
             return warnings
 
-        # A single IP owning most of the traffic can be suspicious or noisy.
+        # If one IP owns most of the traffic, it may be noisy or suspicious.
         for ip, count in list(self.src_counts.items()) + list(self.dst_counts.items()):
             if count / total > 0.5:
                 percent = self.percent(count)
@@ -172,8 +175,12 @@ class StatsManager:
 
         for port, count in self.top_items(port_counts, limit=10):
             service = self.get_service_name(port)
+            marker = ""
+
             # Unknown ports with repeated traffic deserve extra attention.
-            marker = " attention" if service == "Unknown" and count > 3 else ""
+            if service == "Unknown" and count > 3:
+                marker = " attention"
+
             print(
                 f"{port:<7} {service:<14} {count:>6}  {self.percent(count)}{marker}"
             )

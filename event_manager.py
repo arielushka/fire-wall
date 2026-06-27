@@ -13,7 +13,7 @@ class EventManager:
         self.print_event(event)
 
     def print_event(self, event):
-        # Print one clean alert block instead of a raw dictionary.
+        # Print one clean alert block instead of showing the raw dictionary.
         print()
         print("Security Event")
         print("-" * 64)
@@ -26,6 +26,8 @@ class EventManager:
         details = event.get("details")
         if details:
             print("Details  :")
+
+            # Details can be different for firewall alerts and scan alerts.
             for key, value in details.items():
                 print(f"  {key:<11}: {value}")
 
