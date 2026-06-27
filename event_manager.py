@@ -3,14 +3,17 @@ from datetime import datetime
 
 class EventManager:
     def __init__(self):
+        # Each event is a dictionary with type, severity, IP flow, and details.
         self.events = []
 
     def add_event(self, event):
+        # Add the timestamp here so detectors do not need to know about output.
         event["time"] = datetime.now().strftime("%H:%M:%S")
         self.events.append(event)
         self.print_event(event)
 
     def print_event(self, event):
+        # Print one clean alert block instead of a raw dictionary.
         print()
         print("Security Event")
         print("-" * 64)

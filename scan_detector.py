@@ -3,12 +3,13 @@ import time
 
 class ScanDetector:
     def __init__(self, port_threshold=8, time_window=10):
+        # Tracks destination ports per source/destination IP pair.
         self.scan_tracker = {}
         self.alerted_scanners = set()
         self.port_threshold = port_threshold
         self.time_window = time_window
 
-    def analyze_packet(self, dst_port, src_ip, dst_ip):
+    def analyze_packet(self, dst_port, src_port, src_ip, dst_ip, packet_size):
         src_dst_pair = (src_ip, dst_ip)
         current_time = time.perf_counter()
 
@@ -16,6 +17,7 @@ class ScanDetector:
             self.scan_tracker[src_dst_pair] = {}
 
         self.scan_tracker[src_dst_pair][dst_port] = current_time
+        # Keep only recent ports so old traffic does not trigger alerts.
         self.remove_old_ports(src_dst_pair, current_time)
 
         scanned_ports = self.scan_tracker[src_dst_pair]
@@ -26,6 +28,7 @@ class ScanDetector:
             return None
 
         self.alerted_scanners.add(src_dst_pair)
+        # Return a dictionary so EventManager controls how alerts are printed.
         return {
             "type": "Port Scan",
             "severity": "HIGH",
@@ -36,6 +39,8 @@ class ScanDetector:
                 f"in {self.time_window} seconds"
             ),
             "details": {
+                "src_port": src_port,
+                "packet_size": packet_size,
                 "ports": sorted(scanned_ports.keys()),
                 "threshold": self.port_threshold,
                 "time_window": self.time_window,
@@ -45,6 +50,8 @@ class ScanDetector:
     def remove_old_ports(self, src_dst_pair, current_time):
         old_ports = []
 
+        # Collect first, delete second, so the dictionary is not changed while
+        # Python is looping over it.
         for port, seen_time in self.scan_tracker[src_dst_pair].items():
             if current_time - seen_time > self.time_window:
                 old_ports.append(port)
