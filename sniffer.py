@@ -47,7 +47,7 @@ def handle_packet(packet):
     else:
         detect_and_save_security_event(packet_info)
 
-    if stats.get_total_packets() % SUMMARY_INTERVAL == 0:
+    if SUMMARY_INTERVAL > 0 and stats.get_total_packets() % SUMMARY_INTERVAL == 0:
         stats.print_summary()
 
 
@@ -157,7 +157,17 @@ def print_finished():
     print("=" * 64)
     print("Capture Finished")
     print("=" * 64)
-    stats.print_summary()
+
+    total_packets = stats.get_total_packets()
+    summary_already_printed = (
+        SUMMARY_INTERVAL > 0
+        and total_packets > 0
+        and total_packets % SUMMARY_INTERVAL == 0
+    )
+
+    if not summary_already_printed:
+        stats.print_summary()
+
     firewall.print_summary()
     events.print_events()
 
