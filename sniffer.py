@@ -14,6 +14,7 @@ scan_detector = ScanDetector()
 events = EventManager()
 firewall = FirewallManager()
 firewall.load_default_rules()
+firewall.unblock_dst_port(23)
 
 
 def handle_packet(packet):

@@ -6,10 +6,24 @@ class EventManager:
         # Each event is a dictionary with type, severity, IP flow, and details.
         self.events = []
 
+    def save_event(self, event):
+        data = (
+            "Security Event\n"
+            + "-" * 64
+            + f"\nTime     : {event['time']}\n"
+            + f"Severity : {event['severity']}\n"
+            + f"Type     : {event['type']}\n"
+            + f"Flow     : {event['src_ip']} -> {event['dst_ip']}\n"
+            + f"Message  : {event['message']}/n"
+        )
+        with open("data_events.txt", "a", encoding="utf-8") as f:
+            f.write(data)
+
     def add_event(self, event):
         # Add the timestamp here so detectors do not need to know about output.
         event["time"] = datetime.now().strftime("%H:%M:%S")
         self.events.append(event)
+        self.save_event(event)
         self.print_event(event)
 
     def print_event(self, event):
