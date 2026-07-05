@@ -19,6 +19,13 @@ class EventManager:
         with open("data_events.txt", "a", encoding="utf-8") as f:
             f.write(data)
 
+    def get_severity_summary(self):
+        summary = {"LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0}
+        for event in self.events:
+            severity = event["severity"]
+            if severity in summary:
+                summary[severity] += 1
+
     def add_event(self, event):
         # Add the timestamp here so detectors do not need to know about output.
         event["time"] = datetime.now().strftime("%H:%M:%S")
@@ -57,3 +64,15 @@ class EventManager:
 
         for event in self.events:
             self.print_event(event)
+
+    def print_severity_summary(self):
+        print("Security Events Summary")
+        print("-" * 64)
+        summary = self.get_severity_summary()
+        empty = True
+        for security, count in summary.items():
+            if count > 0:
+                empty = False
+            print(f"{security}: {count}")
+        if empty:
+            print("non Security Events")

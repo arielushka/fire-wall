@@ -62,10 +62,10 @@ class FirewallManager:
         self.blocked_dst_ports.add(port)
 
     def unblock_dst_port(self, port):
-        self.block_dst_port.discard(port)
+        self.blocked_dst_ports.discard(port)
 
     def unblock_src_port(self, port):
-        self.block_src_port.discard(port)
+        self.blocked_src_ports.discard(port)
 
     def block_port(self, port):
         self.block_dst_port(port)

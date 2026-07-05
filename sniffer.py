@@ -171,6 +171,8 @@ def print_finished():
 
     firewall.print_summary()
     events.print_events()
+    summary = events.get_severity_summary()
+    print(summary)
 
 
 if __name__ == "__main__":
