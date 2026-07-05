@@ -14,7 +14,7 @@ class EventManager:
             + f"Severity : {event['severity']}\n"
             + f"Type     : {event['type']}\n"
             + f"Flow     : {event['src_ip']} -> {event['dst_ip']}\n"
-            + f"Message  : {event['message']}/n"
+            + f"Message  : {event['message']}\n"
         )
         with open("data_events.txt", "a", encoding="utf-8") as f:
             f.write(data)
@@ -76,3 +76,4 @@ class EventManager:
             print(f"{security}: {count}")
         if empty:
             print("non Security Events")
+        return summary

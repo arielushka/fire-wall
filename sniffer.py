@@ -14,7 +14,6 @@ scan_detector = ScanDetector()
 events = EventManager()
 firewall = FirewallManager()
 firewall.load_default_rules()
-firewall.unblock_dst_port(23)
 
 
 def handle_packet(packet):
@@ -172,7 +171,6 @@ def print_finished():
     firewall.print_summary()
     events.print_events()
     summary = events.get_severity_summary()
-    print(summary)
 
 
 if __name__ == "__main__":
