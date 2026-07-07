@@ -3,6 +3,7 @@ from scapy.all import ICMP, IP, TCP, UDP, sniff
 from event_manager import EventManager
 from FirewallManager import FirewallManager
 from scan_detector import ScanDetector
+from security_event import SecurityEvent
 from stats_manager import StatsManager
 
 PACKET_COUNT = 200
@@ -37,24 +38,12 @@ def handle_packet(packet):
     # The firewall runs before the scan detector.
     # Blocked packets should not be used for port-scan detection.
     firewall_result = firewall.check_packet(packet_info)
-    firewall_action = firewall_result["action"]
 
-    if firewall_action == "BLOCK":
-        events.add_event(build_firewall_event(packet_info, firewall_result))
-    elif firewall_action == "ALERT":
-        events.add_event(build_firewall_event(packet_info, firewall_result))
-        detect_and_save_security_event(packet_info)
-    else:
-        detect_and_save_security_event(packet_info)
+    security_events = detect_security_event(packet_info, firewall_result)
+    events.add_events(security_events)
 
     if SUMMARY_INTERVAL > 0 and stats.get_total_packets() % SUMMARY_INTERVAL == 0:
         stats.print_summary()
-
-
-def detect_and_save_security_event(packet_info):
-    event = detect_security_event(packet_info)
-    if event:
-        events.add_event(event)
 
 
 def parse_packet(packet):
@@ -92,44 +81,57 @@ def parse_packet(packet):
     return packet_info
 
 
-def detect_security_event(packet_info):
+def detect_security_event(packet_info, firewall_result):
+    events_found = []
+    firewall_action = firewall_result.action
+
+    if firewall_action in ("BLOCK", "ALERT"):
+        events_found.append(build_firewall_event(packet_info, firewall_result))
+
+    if firewall_action == "BLOCK":
+        events_found.extend(stats.build_warning_events())
+        return events_found
+
     # For now, the security detector only checks TCP SYN packets.
-    if packet_info["protocol"] != "TCP":
-        return None
+    if (
+        packet_info["protocol"] == "TCP"
+        and "S" in packet_info["tcp_flags"]
+        and "A" not in packet_info["tcp_flags"]
+    ):
+        scan_event = scan_detector.analyze_packet(
+            packet_info["dst_port"],
+            packet_info["src_port"],
+            packet_info["src_ip"],
+            packet_info["dst_ip"],
+            packet_info["packet_size"],
+        )
 
-    flags = packet_info["tcp_flags"]
-    # SYN without ACK usually means the start of a TCP connection attempt.
-    is_syn_packet = "S" in flags and "A" not in flags
+        if scan_event:
+            events_found.append(scan_event)
 
-    if not is_syn_packet:
-        return None
+    events_found.extend(stats.build_warning_events())
 
-    return scan_detector.analyze_packet(
-        packet_info["dst_port"],
-        packet_info["src_port"],
-        packet_info["src_ip"],
-        packet_info["dst_ip"],
-        packet_info["packet_size"],
-    )
+    return events_found
 
 
 def build_firewall_event(packet_info, firewall_result):
-    action = firewall_result["action"]
+    action = firewall_result.action
 
-    # EventManager prints and stores this the same way it handles scan alerts.
-    return {
-        "type": f"Firewall {action.title()}",
-        "severity": firewall_result["severity"],
-        "src_ip": packet_info["src_ip"],
-        "dst_ip": packet_info["dst_ip"],
-        "message": firewall_result["reason"],
-        "details": {
+    return SecurityEvent(
+        event_type=f"Firewall {action.title()}",
+        severity=firewall_result.severity,
+        source="firewall_manager",
+        action=action,
+        src_ip=packet_info["src_ip"],
+        dst_ip=packet_info["dst_ip"],
+        message=firewall_result.reason,
+        details={
             "protocol": packet_info["protocol"],
             "src_port": packet_info["src_port"],
             "dst_port": packet_info["dst_port"],
             "packet_size": packet_info["packet_size"],
         },
-    }
+    )
 
 
 def main():
@@ -170,7 +172,7 @@ def print_finished():
 
     firewall.print_summary()
     events.print_events()
-    summary = events.get_severity_summary()
+    events.print_severity_summary()
 
 
 if __name__ == "__main__":

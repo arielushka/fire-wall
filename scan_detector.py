@@ -1,5 +1,7 @@
 import time
 
+from security_event import SecurityEvent
+
 
 class ScanDetector:
     def __init__(self, port_threshold=8, time_window=10):
@@ -29,24 +31,25 @@ class ScanDetector:
 
         self.alerted_scanners.add(src_dst_pair)
 
-        # EventManager will add the time and print this nicely.
-        return {
-            "type": "Port Scan",
-            "severity": "HIGH",
-            "src_ip": src_ip,
-            "dst_ip": dst_ip,
-            "message": (
+        return SecurityEvent(
+            event_type="Port Scan",
+            severity="HIGH",
+            source="scan_detector",
+            action="ALERT",
+            src_ip=src_ip,
+            dst_ip=dst_ip,
+            message=(
                 f"Tried {len(recent_ports)} different destination ports "
                 f"in {self.time_window} seconds"
             ),
-            "details": {
+            details={
                 "src_port": src_port,
                 "packet_size": packet_size,
                 "ports": sorted(recent_ports.keys()),
                 "threshold": self.port_threshold,
                 "time_window": self.time_window,
             },
-        }
+        )
 
     def remove_old_ports(self, src_dst_pair, current_time):
         old_ports = []

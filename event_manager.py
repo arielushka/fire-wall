@@ -1,56 +1,72 @@
+import json
 from datetime import datetime
+
+from security_event import SecurityEvent
 
 
 class EventManager:
-    def __init__(self):
-        # Each event is a dictionary with type, severity, IP flow, and details.
+    def __init__(self, output_file="data_events.json"):
+        self.output_file = output_file
         self.events = []
+        self.session_started_at = datetime.now().isoformat(timespec="seconds")
+        self.save_events()
 
-    def save_event(self, event):
-        data = (
-            "Security Event\n"
-            + "-" * 64
-            + f"\nTime     : {event['time']}\n"
-            + f"Severity : {event['severity']}\n"
-            + f"Type     : {event['type']}\n"
-            + f"Flow     : {event['src_ip']} -> {event['dst_ip']}\n"
-            + f"Message  : {event['message']}\n"
-        )
-        with open("data_events.txt", "a", encoding="utf-8") as f:
-            f.write(data)
+    def add_event(self, event):
+        if not isinstance(event, SecurityEvent):
+            raise TypeError("EventManager.add_event expects a SecurityEvent object")
+
+        self.events.append(event)
+        self.save_events()
+
+    def add_events(self, events):
+        if not events:
+            return
+
+        for event in events:
+            if not isinstance(event, SecurityEvent):
+                raise TypeError("EventManager.add_events expects SecurityEvent objects")
+
+            self.events.append(event)
+
+        self.save_events()
+
+    def save_events(self):
+        data = {
+            "session_started_at": self.session_started_at,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "event_count": len(self.events),
+            "severity_summary": self.get_severity_summary(),
+            "events": [event.to_dict() for event in self.events],
+        }
+
+        with open(self.output_file, "w", encoding="utf-8") as file:
+            json.dump(data, file, indent=4, ensure_ascii=False)
 
     def get_severity_summary(self):
         summary = {"LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0}
-        for event in self.events:
-            severity = event["severity"]
-            if severity in summary:
-                summary[severity] += 1
 
-    def add_event(self, event):
-        # Add the timestamp here so detectors do not need to know about output.
-        event["time"] = datetime.now().strftime("%H:%M:%S")
-        self.events.append(event)
-        self.save_event(event)
-        self.print_event(event)
+        for event in self.events:
+            if event.severity in summary:
+                summary[event.severity] += 1
+
+        return summary
 
     def print_event(self, event):
-        # Print one clean alert block instead of showing the raw dictionary.
         print()
         print("Security Event")
         print("-" * 64)
-        print(f"Time     : {event['time']}")
-        print(f"Severity : {event['severity']}")
-        print(f"Type     : {event['type']}")
-        print(f"Flow     : {event['src_ip']} -> {event['dst_ip']}")
-        print(f"Message  : {event['message']}")
+        print(f"Time     : {event.time}")
+        print(f"Source   : {event.source}")
+        print(f"Severity : {event.severity}")
+        print(f"Action   : {event.action}")
+        print(f"Type     : {event.event_type}")
+        print(f"Flow     : {event.src_ip} -> {event.dst_ip}")
+        print(f"Message  : {event.message}")
 
-        details = event.get("details")
-        if details:
+        if event.details:
             print("Details  :")
-
-            # Details can be different for firewall alerts and scan alerts.
-            for key, value in details.items():
-                print(f"  {key:<11}: {value}")
+            for key, value in event.details.items():
+                print(f"  {key:<16}: {value}")
 
     def print_events(self):
         if not self.events:
@@ -66,14 +82,12 @@ class EventManager:
             self.print_event(event)
 
     def print_severity_summary(self):
+        print()
         print("Security Events Summary")
         print("-" * 64)
+
         summary = self.get_severity_summary()
-        empty = True
-        for security, count in summary.items():
-            if count > 0:
-                empty = False
-            print(f"{security}: {count}")
-        if empty:
-            print("non Security Events")
+        for severity, count in summary.items():
+            print(f"{severity:<8}: {count}")
+
         return summary

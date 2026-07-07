@@ -1,3 +1,6 @@
+from security_event import SecurityEvent
+
+
 class StatsManager:
     # A small service list makes the port output easier to read.
     SERVICES = {
@@ -37,6 +40,7 @@ class StatsManager:
         self.total_bytes = 0
         self.smallest_packet = None
         self.largest_packet = None
+        self.alerted_warning_keys = set()
 
     def update_ip_counts(self, src_ip, dst_ip):
         self.src_counts[src_ip] = self.src_counts.get(src_ip, 0) + 1
@@ -82,28 +86,136 @@ class StatsManager:
     def top_items(self, data, limit=5):
         return sorted(data.items(), key=lambda item: item[1], reverse=True)[:limit]
 
-    def build_warnings(self):
+    def build_warning_events(self):
         total = self.get_total_packets()
-        warnings = []
 
         if total == 0:
-            return warnings
+            return []
+
+        warning_events = []
+        warning_events.extend(self.build_traffic_concentration_events(total))
+        warning_events.extend(self.build_protocol_anomaly_events(total))
+        warning_events.extend(self.build_unknown_port_events(total))
+
+        return warning_events
+
+    def build_traffic_concentration_events(self, total):
+        traffic_events = []
 
         # If one IP owns most of the traffic, it may be noisy or suspicious.
-        for ip, count in list(self.src_counts.items()) + list(self.dst_counts.items()):
-            if count / total > 0.5:
-                percent = self.percent(count)
-                warnings.append(
-                    f"High traffic concentration for {ip}: {count} packets ({percent})"
+        for direction, ip_counts in (
+            ("source", self.src_counts),
+            ("destination", self.dst_counts),
+        ):
+            for ip, count in ip_counts.items():
+                is_concentrated = count / total > 0.5
+                alert_key = ("traffic_concentration", direction, ip)
+
+                if is_concentrated and self.should_report(alert_key):
+                    traffic_events.append(
+                        SecurityEvent(
+                            event_type="Traffic Concentration",
+                            severity="MEDIUM",
+                            source="stats_manager",
+                            action="INVESTIGATE",
+                            src_ip=ip if direction == "source" else None,
+                            dst_ip=ip if direction == "destination" else None,
+                            message=(
+                                f"High {direction} traffic concentration for {ip}: "
+                                f"{count} packets ({self.percent(count)})"
+                            ),
+                            details={
+                                "direction": direction,
+                                "packet_count": count,
+                                "total_packets": total,
+                            },
+                        )
+                    )
+
+        return traffic_events
+
+    def build_protocol_anomaly_events(self, total):
+        protocol_events = []
+
+        non_ip_count = self.protocol_counts["Non-IP"]
+        non_ip_key = ("protocol_ratio", "Non-IP")
+        if non_ip_count / total > 0.3 and self.should_report(non_ip_key):
+            protocol_events.append(
+                SecurityEvent(
+                    event_type="Protocol Anomaly",
+                    severity="LOW",
+                    source="stats_manager",
+                    action="INVESTIGATE",
+                    message="Large amount of Non-IP traffic",
+                    details={
+                        "protocol": "Non-IP",
+                        "packet_count": non_ip_count,
+                        "total_packets": total,
+                        "ratio": self.percent(non_ip_count),
+                    },
                 )
+            )
 
-        if self.protocol_counts["Non-IP"] / total > 0.3:
-            warnings.append("Large amount of Non-IP traffic")
+        icmp_count = self.protocol_counts["ICMP"]
+        icmp_key = ("protocol_ratio", "ICMP")
+        if icmp_count / total > 0.3 and self.should_report(icmp_key):
+            protocol_events.append(
+                SecurityEvent(
+                    event_type="Protocol Anomaly",
+                    severity="MEDIUM",
+                    source="stats_manager",
+                    action="INVESTIGATE",
+                    message="High ICMP traffic, possible ping sweep or flood",
+                    details={
+                        "protocol": "ICMP",
+                        "packet_count": icmp_count,
+                        "total_packets": total,
+                        "ratio": self.percent(icmp_count),
+                    },
+                )
+            )
 
-        if self.protocol_counts["ICMP"] / total > 0.3:
-            warnings.append("High ICMP traffic, possible ping sweep or flood")
+        return protocol_events
 
-        return warnings
+    def build_unknown_port_events(self, total):
+        port_events = []
+
+        for direction, port_counts in (
+            ("source", self.src_port_counts),
+            ("destination", self.dst_port_counts),
+        ):
+            for port, count in port_counts.items():
+                is_unknown_port = self.get_service_name(port) == "Unknown"
+                alert_key = ("unknown_port_activity", direction, port)
+
+                if is_unknown_port and count > 3 and self.should_report(alert_key):
+                    port_events.append(
+                        SecurityEvent(
+                            event_type="Unknown Port Activity",
+                            severity="LOW",
+                            source="stats_manager",
+                            action="INVESTIGATE",
+                            message=(
+                                f"Repeated traffic on unknown {direction} port "
+                                f"{port}: {count} packets"
+                            ),
+                            details={
+                                "direction": direction,
+                                "port": port,
+                                "packet_count": count,
+                                "total_packets": total,
+                            },
+                        )
+                    )
+
+        return port_events
+
+    def should_report(self, alert_key):
+        if alert_key in self.alerted_warning_keys:
+            return False
+
+        self.alerted_warning_keys.add(alert_key)
+        return True
 
     def percent(self, count):
         total = self.get_total_packets()
@@ -132,7 +244,6 @@ class StatsManager:
         self.print_ip_table("Top Destination IPs", self.dst_counts)
         self.print_ports("Top Source Ports", self.src_port_counts)
         self.print_ports("Top Destination Ports", self.dst_port_counts)
-        self.print_warnings()
 
     def print_packet_sizes(self):
         print(
@@ -175,28 +286,4 @@ class StatsManager:
 
         for port, count in self.top_items(port_counts, limit=10):
             service = self.get_service_name(port)
-            marker = ""
-
-            # Unknown ports with repeated traffic deserve extra attention.
-            if service == "Unknown" and count > 3:
-                marker = " attention"
-
-            print(
-                f"{port:<7} {service:<14} {count:>6}  {self.percent(count)}{marker}"
-            )
-
-    def print_warnings(self):
-        warnings = self.build_warnings()
-
-        if not warnings:
-            print()
-            print("Warnings")
-            print("-" * 64)
-            print("No warning patterns detected in this summary window.")
-            return
-
-        print()
-        print("Warnings")
-        print("-" * 64)
-        for warning in warnings:
-            print(f"! {warning}")
+            print(f"{port:<7} {service:<14} {count:>6}  {self.percent(count)}")

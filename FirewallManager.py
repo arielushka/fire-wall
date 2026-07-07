@@ -1,5 +1,7 @@
 import ipaddress
 
+from firewall_decision import FirewallDecision
+
 
 class FirewallManager:
     # Each port has a service name and a default severity.
@@ -146,15 +148,11 @@ class FirewallManager:
         return self.build_result("ALLOW", "No firewall rule matched", "LOW")
 
     def build_result(self, action, reason, severity):
-        return {
-            "action": action,
-            "reason": reason,
-            "severity": severity,
-        }
+        return FirewallDecision(action, reason, severity)
 
     def record_result(self, result):
-        action = result["action"]
-        reason = result["reason"]
+        action = result.action
+        reason = result.reason
 
         if action == "BLOCK":
             self.blocked_count += 1
