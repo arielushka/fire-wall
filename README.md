@@ -1,115 +1,120 @@
-# Anti Virus Network Monitor
+# Anti Virus Network Firewall v1.0
 
-A simple Python network monitoring project built with Scapy. It captures live packets, summarizes traffic, applies basic firewall-style rules, and raises security events for suspicious activity such as TCP port scans.
+A professionalized Python network-monitoring firewall simulator built with Scapy.
+It captures live packets, evaluates configurable firewall rules, detects suspicious
+traffic patterns, and writes structured JSON security events.
 
-This project is educational and local-monitoring focused. It does not install a system firewall rule, drop packets from the operating system, or replace a real antivirus/IDS product.
+This project is a monitoring and decision layer. It does not install operating
+system firewall rules or replace a production EDR/IDS product.
 
-## Features
+## Version 1.0 Highlights
 
-- Captures live packets with Scapy.
-- Parses IP, TCP, UDP, and ICMP traffic into a shared packet dictionary.
-- Tracks traffic statistics by protocol, source IP, destination IP, source port, destination port, and packet size.
-- Applies configurable firewall checks before scan detection.
-- Blocks or alerts on common risky destination ports such as Telnet, SMB, RDP, RPC, NetBIOS, and FTP.
-- Blocks ICMP by default.
-- Blocks public TCP sources that try to access sensitive services on ports `445` or `3389`.
-- Detects possible TCP SYN port scans across many destination ports in a short time window.
-- Prints readable summaries and security events to the terminal.
+- Split configuration into JSON files under `config/`.
+- Moved packet parsing into `packet_parser.py`.
+- Added `ThreatDetector` for TCP SYN scans, UDP sweeps, and burst traffic.
+- Added richer firewall rules for high-risk remote admin, Windows, database, and exposed service ports.
+- Added structured event output metadata with app name and version.
+- Added CLI flags for packet count, summary interval, and event output path.
+- Reduced duplicate code by centralizing service metadata and stats updates.
+- Added a small unittest suite for core firewall and scan behavior.
 
-## Project Files
+## Project Structure
 
-- `sniffer.py` - main entry point. Captures packets, parses them, updates stats, runs firewall checks, runs scan detection, and prints final summaries.
-- `FirewallManager.py` - contains firewall rule storage, packet evaluation logic, counters, and firewall summaries.
-- `stats_manager.py` - tracks protocol, IP, port, packet-size statistics, and warning patterns.
-- `scan_detector.py` - detects possible TCP SYN port scans by tracking unique destination ports per source/destination pair.
-- `event_manager.py` - stores and prints firewall and scan security events.
-- `AI_readme` - detailed implementation notes for AI agents or future maintainers.
+- `sniffer.py` - main CLI entry point and application orchestration.
+- `FirewallManager.py` - configurable firewall rule engine.
+- `threat_detector.py` - higher-level threat detection coordinator.
+- `scan_detector.py` - reusable port-scan/sweep detector.
+- `packet_parser.py` - Scapy packet to plain dictionary parser.
+- `stats_manager.py` - traffic statistics and statistical warning events.
+- `event_manager.py` - security event storage, summary, and JSON persistence.
+- `security_event.py` - validated event model.
+- `firewall_decision.py` - validated firewall decision model.
+- `config/app_settings.json` - app version, packet count, summary interval, output file.
+- `config/firewall_rules.json` - firewall ports, protocols, sensitive services, flow rules.
+- `config/detection_rules.json` - scan, sweep, burst, and stats warning thresholds.
+- `config/services.json` - shared service/port metadata.
+- `tests/test_firewall_v1.py` - core behavior tests.
+- `VERSION` - current project version.
 
 ## Requirements
 
-- Python 3.9 or newer recommended.
+- Python 3.9 or newer.
 - Scapy.
-- Administrator/root privileges may be required for live packet capture.
+- Administrator/root privileges may be required for live capture.
 - Npcap is usually required on Windows for Scapy sniffing.
 
-Install Python dependencies:
+Install dependencies:
 
 ```powershell
-pip install scapy
+pip install -r requirements.txt
 ```
 
 ## Run
 
-From the project directory:
+Default run:
 
 ```powershell
 python sniffer.py
 ```
 
-By default, `sniffer.py` captures `200` packets and prints a summary every `200` packets. Press `Ctrl+C` to stop early.
+Capture 50 packets and save events to a custom file:
 
-The default capture settings are defined near the top of `sniffer.py`:
-
-```python
-PACKET_COUNT = 200
-SUMMARY_INTERVAL = 200
+```powershell
+python sniffer.py --count 50 --summary-interval 25 --events-file data/lab_events.json
 ```
 
-## How It Works
+By default, events are written to:
 
-1. `sniffer.py` starts Scapy with `sniff(prn=handle_packet, store=False, count=PACKET_COUNT)`.
-2. Each captured packet is converted into a plain dictionary by `parse_packet`.
-3. `StatsManager` updates traffic counters for every packet, including packets later marked as blocked.
-4. `FirewallManager` evaluates the packet.
-5. Blocked packets are recorded as firewall events and are not used for port-scan detection.
-6. Alerted and allowed TCP SYN packets are passed to `ScanDetector`.
-7. `EventManager` stores and immediately prints each security event.
-8. When capture ends, the app prints stats, firewall, and event summaries.
+```text
+data/events.json
+```
 
-## Default Firewall Behavior
+## Configure Firewall Rules
 
-`FirewallManager.load_default_rules()` enables these rules:
+Edit `config/firewall_rules.json`.
 
-- Block destination ports:
-  - `21` FTP
-  - `23` Telnet
-  - `135` RPC
-  - `139` NetBIOS
-  - `445` SMB
-  - `3389` RDP
-- Block protocol:
-  - `ICMP`
-- Block public TCP source IPs trying to reach sensitive destination ports:
-  - `445` SMB
-  - `3389` RDP
+Important fields:
 
-Firewall decisions are returned as dictionaries:
+- `blocked_protocols` blocks complete protocols such as `ICMP`.
+- `blocked_dst_ports` blocks risky destination ports.
+- `alert_dst_ports` creates an alert but still allows analysis to continue.
+- `sensitive_public_dst_ports` blocks public TCP sources that try to reach sensitive services.
+- `blocked_flow_rules` supports exact source IP to destination IP and destination port blocks.
+- `max_packet_size` alerts on oversized packets.
 
-```python
+Example flow rule:
+
+```json
 {
-    "action": "ALLOW" | "ALERT" | "BLOCK",
-    "reason": "...",
-    "severity": "LOW" | "MEDIUM" | "HIGH",
+    "src_ip": "203.0.113.10",
+    "dst_ip": "192.168.1.20",
+    "dst_port": 445
 }
 ```
 
-## Port Scan Detection
+## Detection Rules
 
-`ScanDetector` looks only at TCP SYN packets without ACK. A source/destination pair is considered suspicious when it tries at least `8` different destination ports within `10` seconds.
+Edit `config/detection_rules.json`.
 
-These defaults are set in `scan_detector.py`:
+Current detections:
 
-```python
-ScanDetector(port_threshold=8, time_window=10)
+- TCP SYN port scan.
+- UDP port sweep.
+- Per-source packet burst.
+- Traffic concentration.
+- High ICMP or Non-IP ratio.
+- Repeated unknown port activity.
+
+## Test
+
+Run the local test suite:
+
+```powershell
+python -m unittest discover -s tests
 ```
-
-Each pair alerts only once per program run.
 
 ## Notes
 
-- The project currently prints output to the console only.
-- Events are stored in memory and are not written to disk.
-- There is no command-line interface yet.
-- There are no automated tests yet.
-- The firewall is a software decision layer inside the monitor. It records `BLOCK` events but does not stop traffic at the OS/network level.
-
+- `BLOCK` means the monitor recorded a firewall decision. It does not drop the packet at OS level.
+- The old root-level `data_events.json` file is left untouched for historical runs.
+- The default v1.0 event output is `data/events.json`.

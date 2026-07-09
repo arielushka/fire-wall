@@ -1,0 +1,12 @@
+{
+    "default_action": "ALLOW",
+    "max_packet_size": 1500,
+    "blocked_protocols": ["ICMP"],
+    "blocked_src_ips": [],
+    "blocked_dst_ips": [],
+    "blocked_src_ports": [],
+    "alert_dst_ports": [22, 1433, 3306, 5432, 5900, 6379, 9200],
+    "blocked_dst_ports": [21, 23, 135, 137, 138, 139, 445, 3389],
+    "sensitive_public_dst_ports": [22, 135, 139, 445, 1433, 3306, 3389, 5432, 5900, 6379, 9200],
+    "blocked_flow_rules": []
+}

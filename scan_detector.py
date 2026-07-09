@@ -4,12 +4,22 @@ from security_event import SecurityEvent
 
 
 class ScanDetector:
-    def __init__(self, port_threshold=8, time_window=10):
+    def __init__(
+        self,
+        port_threshold=8,
+        time_window=10,
+        event_type="TCP SYN Port Scan",
+        protocol="TCP",
+        severity="HIGH",
+    ):
         # For each pair of computers, remember which destination ports were tried.
         self.scan_tracker = {}
         self.alerted_scanners = set()
         self.port_threshold = port_threshold
         self.time_window = time_window
+        self.event_type = event_type
+        self.protocol = protocol
+        self.severity = severity
 
     def analyze_packet(self, dst_port, src_port, src_ip, dst_ip, packet_size):
         src_dst_pair = (src_ip, dst_ip)
@@ -32,14 +42,14 @@ class ScanDetector:
         self.alerted_scanners.add(src_dst_pair)
 
         return SecurityEvent(
-            event_type="Port Scan",
-            severity="HIGH",
+            event_type=self.event_type,
+            severity=self.severity,
             source="scan_detector",
             action="ALERT",
             src_ip=src_ip,
             dst_ip=dst_ip,
             message=(
-                f"Tried {len(recent_ports)} different destination ports "
+                f"{self.protocol} traffic tried {len(recent_ports)} destination ports "
                 f"in {self.time_window} seconds"
             ),
             details={
@@ -48,6 +58,7 @@ class ScanDetector:
                 "ports": sorted(recent_ports.keys()),
                 "threshold": self.port_threshold,
                 "time_window": self.time_window,
+                "protocol": self.protocol,
             },
         )
 

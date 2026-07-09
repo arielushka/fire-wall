@@ -1,0 +1,7 @@
+{
+    "app_name": "Anti Virus Network Firewall",
+    "version": "1.0.0",
+    "packet_count": 200,
+    "summary_interval": 200,
+    "event_output_file": "data/events.json"
+}

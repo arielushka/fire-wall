@@ -1,36 +1,24 @@
 import ipaddress
 
+from config_loader import load_json_config
 from firewall_decision import FirewallDecision
 
 
 class FirewallManager:
-    # Each port has a service name and a default severity.
-    # This makes the printed messages easier to understand.
-    DEFAULT_BLOCKED_DST_PORTS = {
-        21: ("FTP", "MEDIUM"),
-        23: ("Telnet", "MEDIUM"),
-        135: ("RPC", "HIGH"),
-        139: ("NetBIOS", "HIGH"),
-        445: ("SMB", "HIGH"),
-        3389: ("RDP", "HIGH"),
-    }
+    def __init__(self, firewall_config=None, services=None):
+        self.firewall_config = firewall_config or load_json_config("firewall_rules.json")
+        self.services = services or self.load_services()
 
-    SENSITIVE_DST_PORTS = {445, 3389}
-
-    def __init__(self):
-        # Source means "where the packet came from".
-        # Destination means "where the packet is going".
         self.blocked_src_ips = set()
         self.blocked_dst_ips = set()
         self.blocked_src_ports = set()
         self.blocked_dst_ports = set()
         self.blocked_protocols = set()
         self.alerted_dst_ports = set()
-
-        # Example rule: block 1.2.3.4 -> 8.8.8.8:445
         self.blocked_src_ip_dst_ip_dst_ports = set()
-
-        self.max_packet_size = 1500
+        self.sensitive_dst_ports = set()
+        self.max_packet_size = self.firewall_config.get("max_packet_size", 1500)
+        self.default_action = self.firewall_config.get("default_action", "ALLOW")
 
         # These counters help us print a simple firewall summary.
         self.allowed_count = 0
@@ -39,11 +27,30 @@ class FirewallManager:
         self.blocked_reasons = {}
         self.alert_reasons = {}
 
-    def load_default_rules(self):
-        for port in self.DEFAULT_BLOCKED_DST_PORTS:
-            self.block_dst_port(port)
+    def load_services(self):
+        raw_services = load_json_config("services.json")
+        return {int(port): info for port, info in raw_services.items()}
 
-        self.block_protocol("ICMP")
+    def load_default_rules(self):
+        self.blocked_src_ips.update(self.firewall_config.get("blocked_src_ips", []))
+        self.blocked_dst_ips.update(self.firewall_config.get("blocked_dst_ips", []))
+        self.blocked_protocols.update(self.firewall_config.get("blocked_protocols", []))
+        self.blocked_src_ports.update(self.to_int_set("blocked_src_ports"))
+        self.blocked_dst_ports.update(self.to_int_set("blocked_dst_ports"))
+        self.alerted_dst_ports.update(self.to_int_set("alert_dst_ports"))
+        self.sensitive_dst_ports.update(self.to_int_set("sensitive_public_dst_ports"))
+        self.load_flow_rules(self.firewall_config.get("blocked_flow_rules", []))
+
+    def to_int_set(self, key):
+        return {int(value) for value in self.firewall_config.get(key, [])}
+
+    def load_flow_rules(self, flow_rules):
+        for rule in flow_rules:
+            self.block_src_ip_dst_ip_dst_port(
+                rule["src_ip"],
+                rule["dst_ip"],
+                int(rule["dst_port"]),
+            )
 
     def block_src_ip(self, src_ip):
         self.blocked_src_ips.add(src_ip)
@@ -107,7 +114,7 @@ class FirewallManager:
             reason = f"Blocked flow rule: {src_ip} -> {dst_ip}:{dst_port}"
             return self.build_result("BLOCK", reason, "HIGH")
 
-        is_sensitive_service = dst_port in self.SENSITIVE_DST_PORTS
+        is_sensitive_service = dst_port in self.sensitive_dst_ports
         is_tcp = protocol == "TCP"
         is_public_source = self.is_public_ip(src_ip)
 
@@ -117,7 +124,8 @@ class FirewallManager:
                 f"Public source IP accessing sensitive service "
                 f"{service_name}: {dst_port}"
             )
-            return self.build_result("BLOCK", reason, "HIGH")
+            severity = self.get_dst_port_severity(dst_port)
+            return self.build_result("BLOCK", reason, severity)
 
         if protocol in self.blocked_protocols:
             severity = "MEDIUM"
@@ -145,7 +153,7 @@ class FirewallManager:
             reason = f"Suspicious destination port: {dst_port}"
             return self.build_result("ALERT", reason, "LOW")
 
-        return self.build_result("ALLOW", "No firewall rule matched", "LOW")
+        return self.build_result(self.default_action, "No firewall rule matched", "LOW")
 
     def build_result(self, action, reason, severity):
         return FirewallDecision(action, reason, severity)
@@ -166,15 +174,15 @@ class FirewallManager:
             self.allowed_count += 1
 
     def get_service_name(self, port):
-        service_info = self.DEFAULT_BLOCKED_DST_PORTS.get(port)
+        service_info = self.services.get(port)
         if service_info:
-            return service_info[0]
+            return service_info["name"]
         return "Unknown"
 
     def get_dst_port_severity(self, port):
-        service_info = self.DEFAULT_BLOCKED_DST_PORTS.get(port)
+        service_info = self.services.get(port)
         if service_info:
-            return service_info[1]
+            return service_info.get("severity", "MEDIUM")
         return "MEDIUM"
 
     def is_public_ip(self, ip):
@@ -222,7 +230,7 @@ class FirewallManager:
         print(f"{'Max packet size':<32}: {self.max_packet_size} bytes")
         print(
             f"{'Combined sensitive service rule':<32}: "
-            "public src_ip + TCP + dst_port 445/3389"
+            f"public src_ip + TCP + dst_port {self.format_rules(self.sensitive_dst_ports)}"
         )
 
     def print_rule_set(self, title, rules):

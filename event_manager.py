@@ -1,12 +1,16 @@
 import json
 from datetime import datetime
+from pathlib import Path
 
 from security_event import SecurityEvent
 
 
 class EventManager:
-    def __init__(self, output_file="data_events.json"):
-        self.output_file = output_file
+    def __init__(self, output_file="data/events.json", app_name=None, version=None):
+        self.output_file = Path(output_file)
+        self.output_file.parent.mkdir(parents=True, exist_ok=True)
+        self.app_name = app_name or "Anti Virus Network Firewall"
+        self.version = version or "1.0.0"
         self.events = []
         self.session_started_at = datetime.now().isoformat(timespec="seconds")
         self.save_events()
@@ -32,6 +36,8 @@ class EventManager:
 
     def save_events(self):
         data = {
+            "app_name": self.app_name,
+            "version": self.version,
             "session_started_at": self.session_started_at,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "event_count": len(self.events),
@@ -39,7 +45,7 @@ class EventManager:
             "events": [event.to_dict() for event in self.events],
         }
 
-        with open(self.output_file, "w", encoding="utf-8") as file:
+        with self.output_file.open("w", encoding="utf-8") as file:
             json.dump(data, file, indent=4, ensure_ascii=False)
 
     def get_severity_summary(self):

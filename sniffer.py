@@ -1,178 +1,172 @@
-from scapy.all import ICMP, IP, TCP, UDP, sniff
+import argparse
 
+from scapy.all import sniff
+
+from config_loader import load_app_settings, load_json_config, resolve_project_path
 from event_manager import EventManager
 from FirewallManager import FirewallManager
-from scan_detector import ScanDetector
+from packet_parser import parse_packet
 from security_event import SecurityEvent
 from stats_manager import StatsManager
-
-PACKET_COUNT = 200
-SUMMARY_INTERVAL = 200
-
-# Shared managers keep the packet handler small and focused.
-stats = StatsManager()
-scan_detector = ScanDetector()
-events = EventManager()
-firewall = FirewallManager()
-firewall.load_default_rules()
+from threat_detector import ThreatDetector
 
 
-def handle_packet(packet):
-    # Scapy calls this function once for every captured packet.
-    packet_info = parse_packet(packet)
-
-    # Keep the normal traffic statistics, even if the packet is later blocked.
-    stats.update_protocol(packet_info["protocol"])
-
-    if packet_info["src_ip"] and packet_info["dst_ip"]:
-        stats.update_ip_counts(packet_info["src_ip"], packet_info["dst_ip"])
-
-    stats.update_packet_size(packet_info["packet_size"])
-
-    if packet_info["src_port"] is not None:
-        stats.update_src_port(packet_info["src_port"])
-
-    if packet_info["dst_port"] is not None:
-        stats.update_dst_port(packet_info["dst_port"])
-
-    # The firewall runs before the scan detector.
-    # Blocked packets should not be used for port-scan detection.
-    firewall_result = firewall.check_packet(packet_info)
-
-    security_events = detect_security_event(packet_info, firewall_result)
-    events.add_events(security_events)
-
-    if SUMMARY_INTERVAL > 0 and stats.get_total_packets() % SUMMARY_INTERVAL == 0:
-        stats.print_summary()
+def load_services():
+    raw_services = load_json_config("services.json")
+    return {int(port): info for port, info in raw_services.items()}
 
 
-def parse_packet(packet):
-    # Store packet data in one dictionary so the rest of the code does not
-    # need to know Scapy's packet-layer syntax.
-    packet_info = {
-        "protocol": "Non-IP",
-        "src_ip": None,
-        "dst_ip": None,
-        "src_port": None,
-        "dst_port": None,
-        "tcp_flags": "",
-        "packet_size": len(packet),
-    }
+class NetworkFirewallApp:
+    def __init__(self, settings):
+        self.settings = settings
+        self.services = load_services()
+        self.detection_config = load_json_config("detection_rules.json")
 
-    if IP not in packet:
-        return packet_info
+        self.stats = StatsManager(
+            services=self.services,
+            warning_config=self.detection_config.get("stats_warnings", {}),
+        )
+        self.threat_detector = ThreatDetector(self.detection_config)
+        self.events = EventManager(
+            output_file=resolve_project_path(settings["event_output_file"]),
+            app_name=settings["app_name"],
+            version=settings["version"],
+        )
+        self.firewall = FirewallManager(services=self.services)
+        self.firewall.load_default_rules()
 
-    packet_info["src_ip"] = packet[IP].src
-    packet_info["dst_ip"] = packet[IP].dst
-    packet_info["protocol"] = "Other IP"
+    def run(self):
+        self.print_banner()
+        try:
+            sniff(
+                prn=self.handle_packet,
+                store=False,
+                count=self.settings["packet_count"],
+            )
+        except KeyboardInterrupt:
+            print()
+            print("Capture stopped by user.")
 
-    if TCP in packet:
-        packet_info["protocol"] = "TCP"
-        packet_info["src_port"] = packet[TCP].sport
-        packet_info["dst_port"] = packet[TCP].dport
-        packet_info["tcp_flags"] = str(packet[TCP].flags)
-    elif UDP in packet:
-        packet_info["protocol"] = "UDP"
-        packet_info["src_port"] = packet[UDP].sport
-        packet_info["dst_port"] = packet[UDP].dport
-    elif ICMP in packet:
-        packet_info["protocol"] = "ICMP"
+        self.print_finished()
 
-    return packet_info
+    def handle_packet(self, packet):
+        packet_info = parse_packet(packet)
+        self.update_stats(packet_info)
 
+        firewall_result = self.firewall.check_packet(packet_info)
+        security_events = self.detect_security_events(packet_info, firewall_result)
+        self.events.add_events(security_events)
 
-def detect_security_event(packet_info, firewall_result):
-    events_found = []
-    firewall_action = firewall_result.action
+        summary_interval = self.settings["summary_interval"]
+        if summary_interval > 0 and self.stats.get_total_packets() % summary_interval == 0:
+            self.stats.print_summary()
 
-    if firewall_action in ("BLOCK", "ALERT"):
-        events_found.append(build_firewall_event(packet_info, firewall_result))
+    def update_stats(self, packet_info):
+        self.stats.update_protocol(packet_info["protocol"])
+        self.stats.update_packet_size(packet_info["packet_size"])
 
-    if firewall_action == "BLOCK":
-        events_found.extend(stats.build_warning_events())
+        if packet_info["src_ip"] and packet_info["dst_ip"]:
+            self.stats.update_ip_counts(packet_info["src_ip"], packet_info["dst_ip"])
+
+        self.update_optional_port(packet_info["src_port"], self.stats.update_src_port)
+        self.update_optional_port(packet_info["dst_port"], self.stats.update_dst_port)
+
+    def update_optional_port(self, port, update_callback):
+        if port is not None:
+            update_callback(port)
+
+    def detect_security_events(self, packet_info, firewall_result):
+        events_found = []
+
+        if firewall_result.action in ("BLOCK", "ALERT"):
+            events_found.append(self.build_firewall_event(packet_info, firewall_result))
+
+        if firewall_result.action != "BLOCK":
+            events_found.extend(self.threat_detector.analyze_packet(packet_info))
+
+        events_found.extend(self.stats.build_warning_events())
         return events_found
 
-    # For now, the security detector only checks TCP SYN packets.
-    if (
-        packet_info["protocol"] == "TCP"
-        and "S" in packet_info["tcp_flags"]
-        and "A" not in packet_info["tcp_flags"]
-    ):
-        scan_event = scan_detector.analyze_packet(
-            packet_info["dst_port"],
-            packet_info["src_port"],
-            packet_info["src_ip"],
-            packet_info["dst_ip"],
-            packet_info["packet_size"],
+    def build_firewall_event(self, packet_info, firewall_result):
+        return SecurityEvent(
+            event_type=f"Firewall {firewall_result.action.title()}",
+            severity=firewall_result.severity,
+            source="firewall_manager",
+            action=firewall_result.action,
+            src_ip=packet_info["src_ip"],
+            dst_ip=packet_info["dst_ip"],
+            message=firewall_result.reason,
+            details={
+                "protocol": packet_info["protocol"],
+                "src_port": packet_info["src_port"],
+                "dst_port": packet_info["dst_port"],
+                "packet_size": packet_info["packet_size"],
+            },
         )
 
-        if scan_event:
-            events_found.append(scan_event)
+    def print_banner(self):
+        print("=" * 64)
+        print(f"{self.settings['app_name']} v{self.settings['version']}")
+        print("=" * 64)
+        print(f"Capturing {self.settings['packet_count']} packets. Press Ctrl+C to stop.")
+        print(f"Summary prints every {self.settings['summary_interval']} packets.")
+        print(f"Events file: {self.settings['event_output_file']}")
 
-    events_found.extend(stats.build_warning_events())
+    def print_finished(self):
+        print()
+        print("=" * 64)
+        print("Capture Finished")
+        print("=" * 64)
 
-    return events_found
+        total_packets = self.stats.get_total_packets()
+        summary_interval = self.settings["summary_interval"]
+        summary_already_printed = (
+            summary_interval > 0
+            and total_packets > 0
+            and total_packets % summary_interval == 0
+        )
+
+        if not summary_already_printed:
+            self.stats.print_summary()
+
+        self.firewall.print_summary()
+        self.events.print_events()
+        self.events.print_severity_summary()
 
 
-def build_firewall_event(packet_info, firewall_result):
-    action = firewall_result.action
-
-    return SecurityEvent(
-        event_type=f"Firewall {action.title()}",
-        severity=firewall_result.severity,
-        source="firewall_manager",
-        action=action,
-        src_ip=packet_info["src_ip"],
-        dst_ip=packet_info["dst_ip"],
-        message=firewall_result.reason,
-        details={
-            "protocol": packet_info["protocol"],
-            "src_port": packet_info["src_port"],
-            "dst_port": packet_info["dst_port"],
-            "packet_size": packet_info["packet_size"],
-        },
+def parse_args():
+    settings = load_app_settings()
+    parser = argparse.ArgumentParser(
+        description="Anti Virus Network Firewall v1.0 packet monitor"
     )
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=settings["packet_count"],
+        help="number of packets to capture",
+    )
+    parser.add_argument(
+        "--summary-interval",
+        type=int,
+        default=settings["summary_interval"],
+        help="print a traffic summary every N packets",
+    )
+    parser.add_argument(
+        "--events-file",
+        default=settings["event_output_file"],
+        help="JSON file path for saved security events",
+    )
+    return parser.parse_args(), settings
 
 
 def main():
-    print_banner()
-    try:
-        # store=False keeps captured packets out of memory after processing.
-        sniff(prn=handle_packet, store=False, count=PACKET_COUNT)
-    except KeyboardInterrupt:
-        print()
-        print("Capture stopped by user.")
+    args, settings = parse_args()
+    settings["packet_count"] = args.count
+    settings["summary_interval"] = args.summary_interval
+    settings["event_output_file"] = args.events_file
 
-    print_finished()
-
-
-def print_banner():
-    print("=" * 64)
-    print("Anti Virus Network Monitor")
-    print("=" * 64)
-    print(f"Capturing {PACKET_COUNT} packets. Press Ctrl+C to stop.")
-    print(f"Summary prints every {SUMMARY_INTERVAL} packets.")
-
-
-def print_finished():
-    print()
-    print("=" * 64)
-    print("Capture Finished")
-    print("=" * 64)
-
-    total_packets = stats.get_total_packets()
-    summary_already_printed = (
-        SUMMARY_INTERVAL > 0
-        and total_packets > 0
-        and total_packets % SUMMARY_INTERVAL == 0
-    )
-
-    if not summary_already_printed:
-        stats.print_summary()
-
-    firewall.print_summary()
-    events.print_events()
-    events.print_severity_summary()
+    app = NetworkFirewallApp(settings)
+    app.run()
 
 
 if __name__ == "__main__":

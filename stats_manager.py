@@ -1,35 +1,14 @@
 from security_event import SecurityEvent
+from config_loader import load_json_config
 
 
 class StatsManager:
-    # A small service list makes the port output easier to read.
-    SERVICES = {
-        20: "FTP Data",
-        21: "FTP",
-        22: "SSH",
-        23: "Telnet",
-        25: "SMTP",
-        53: "DNS",
-        67: "DHCP",
-        68: "DHCP",
-        80: "HTTP",
-        110: "POP3",
-        123: "NTP",
-        135: "RPC",
-        139: "NetBIOS",
-        143: "IMAP",
-        443: "HTTPS",
-        445: "SMB",
-        993: "IMAPS",
-        995: "POP3S",
-        3306: "MySQL",
-        3389: "RDP",
-        5432: "PostgreSQL",
-    }
-
     PROTOCOLS = ("TCP", "UDP", "ICMP", "Other IP", "Non-IP")
 
-    def __init__(self):
+    def __init__(self, services=None, warning_config=None):
+        self.services = services or self.load_services()
+        self.warning_config = warning_config or self.load_warning_config()
+
         # Dictionaries make it easy to count new IPs and ports as they appear.
         self.src_counts = {}
         self.dst_counts = {}
@@ -41,6 +20,14 @@ class StatsManager:
         self.smallest_packet = None
         self.largest_packet = None
         self.alerted_warning_keys = set()
+
+    def load_services(self):
+        raw_services = load_json_config("services.json")
+        return {int(port): info for port, info in raw_services.items()}
+
+    def load_warning_config(self):
+        detection_config = load_json_config("detection_rules.json")
+        return detection_config.get("stats_warnings", {})
 
     def update_ip_counts(self, src_ip, dst_ip):
         self.src_counts[src_ip] = self.src_counts.get(src_ip, 0) + 1
@@ -72,7 +59,10 @@ class StatsManager:
         self.protocol_counts["Total"] += 1
 
     def get_service_name(self, port):
-        return self.SERVICES.get(port, "Unknown")
+        service_info = self.services.get(port)
+        if not service_info:
+            return "Unknown"
+        return service_info["name"]
 
     def get_total_packets(self):
         return self.protocol_counts["Total"]
@@ -108,7 +98,12 @@ class StatsManager:
             ("destination", self.dst_counts),
         ):
             for ip, count in ip_counts.items():
-                is_concentrated = count / total > 0.5
+                min_packets = self.warning_config.get(
+                    "traffic_concentration_min_packets",
+                    20,
+                )
+                ratio = self.warning_config.get("traffic_concentration_ratio", 0.5)
+                is_concentrated = count >= min_packets and count / total > ratio
                 alert_key = ("traffic_concentration", direction, ip)
 
                 if is_concentrated and self.should_report(alert_key):
@@ -139,7 +134,8 @@ class StatsManager:
 
         non_ip_count = self.protocol_counts["Non-IP"]
         non_ip_key = ("protocol_ratio", "Non-IP")
-        if non_ip_count / total > 0.3 and self.should_report(non_ip_key):
+        non_ip_ratio = self.warning_config.get("non_ip_ratio", 0.3)
+        if non_ip_count / total > non_ip_ratio and self.should_report(non_ip_key):
             protocol_events.append(
                 SecurityEvent(
                     event_type="Protocol Anomaly",
@@ -158,7 +154,8 @@ class StatsManager:
 
         icmp_count = self.protocol_counts["ICMP"]
         icmp_key = ("protocol_ratio", "ICMP")
-        if icmp_count / total > 0.3 and self.should_report(icmp_key):
+        icmp_ratio = self.warning_config.get("icmp_ratio", 0.3)
+        if icmp_count / total > icmp_ratio and self.should_report(icmp_key):
             protocol_events.append(
                 SecurityEvent(
                     event_type="Protocol Anomaly",
@@ -188,7 +185,8 @@ class StatsManager:
                 is_unknown_port = self.get_service_name(port) == "Unknown"
                 alert_key = ("unknown_port_activity", direction, port)
 
-                if is_unknown_port and count > 3 and self.should_report(alert_key):
+                min_count = self.warning_config.get("unknown_port_min_count", 4)
+                if is_unknown_port and count >= min_count and self.should_report(alert_key):
                     port_events.append(
                         SecurityEvent(
                             event_type="Unknown Port Activity",
