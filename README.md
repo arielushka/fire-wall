@@ -1,47 +1,62 @@
-# Anti Virus Network Firewall v1.0
+# Anti Virus Network Firewall
 
-A professionalized Python network-monitoring firewall simulator built with Scapy.
-It captures live packets, evaluates configurable firewall rules, detects suspicious
-traffic patterns, and writes structured JSON security events.
+A simple Python network firewall monitor with a basic GUI, CLI mode, and JSON-based rules.
 
-This project is a monitoring and decision layer. It does not install operating
-system firewall rules or replace a production EDR/IDS product.
+The project captures packets with Scapy, checks them against firewall rules, detects suspicious traffic, and saves security events to JSON.
 
-## Version 1.0 Highlights
+Current version: `1.0.0`
 
-- Split configuration into JSON files under `config/`.
-- Moved packet parsing into `packet_parser.py`.
-- Added `ThreatDetector` for TCP SYN scans, UDP sweeps, and burst traffic.
-- Added richer firewall rules for high-risk remote admin, Windows, database, and exposed service ports.
-- Added structured event output metadata with app name and version.
-- Added CLI flags for packet count, summary interval, and event output path.
-- Reduced duplicate code by centralizing service metadata and stats updates.
-- Added a small unittest suite for core firewall and scan behavior.
+## Features
+
+- Simple desktop GUI with dashboard, events, and rules tabs.
+- CLI mode for quick packet capture.
+- JSON firewall configuration.
+- JSON detection thresholds.
+- Security event output in `json/events.json`.
+- TCP SYN port-scan detection.
+- UDP sweep detection.
+- Packet burst detection.
+- Basic traffic statistics and suspicious pattern warnings.
 
 ## Project Structure
 
-- `sniffer.py` - main CLI entry point and application orchestration.
-- `FirewallManager.py` - configurable firewall rule engine.
-- `threat_detector.py` - higher-level threat detection coordinator.
-- `scan_detector.py` - reusable port-scan/sweep detector.
-- `packet_parser.py` - Scapy packet to plain dictionary parser.
-- `stats_manager.py` - traffic statistics and statistical warning events.
-- `event_manager.py` - security event storage, summary, and JSON persistence.
-- `security_event.py` - validated event model.
-- `firewall_decision.py` - validated firewall decision model.
-- `config/app_settings.json` - app version, packet count, summary interval, output file.
-- `config/firewall_rules.json` - firewall ports, protocols, sensitive services, flow rules.
-- `config/detection_rules.json` - scan, sweep, burst, and stats warning thresholds.
-- `config/services.json` - shared service/port metadata.
-- `tests/test_firewall_v1.py` - core behavior tests.
-- `VERSION` - current project version.
+```text
+anti_virus/
+  code/        Python source code
+  json/        settings, firewall rules, detection rules, services, event output
+  git/         project git notes/history files
+  gui.py       starts the GUI
+  sniffer.py   starts the CLI capture
+```
 
 ## Requirements
 
-- Python 3.9 or newer.
-- Scapy.
-- Administrator/root privileges may be required for live capture.
-- Npcap is usually required on Windows for Scapy sniffing.
+- Python 3.9 or newer
+- Scapy
+- Npcap on Windows for packet capture
+- Administrator/root permissions may be required for live sniffing
+
+Download Npcap for Windows:
+
+```text
+https://npcap.com/
+```
+
+## Installation
+
+Clone the project:
+
+```powershell
+git clone https://github.com/YOUR_USERNAME/YOUR_REPOSITORY.git
+cd YOUR_REPOSITORY
+```
+
+Create and activate a virtual environment:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\activate
+```
 
 Install dependencies:
 
@@ -49,72 +64,66 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-## Run
+## Run the GUI
 
-Default run:
+```powershell
+python gui.py
+```
+
+In the GUI:
+
+- Set the packet count.
+- Click `Start`.
+- Watch packet counts, firewall actions, and events.
+- Open the `Rules` tab to see the active JSON configuration.
+
+## Run the CLI
+
+Capture the default amount of packets:
 
 ```powershell
 python sniffer.py
 ```
 
-Capture 50 packets and save events to a custom file:
+Capture 200 packets:
 
 ```powershell
-python sniffer.py --count 50 --summary-interval 25 --events-file data/lab_events.json
+python sniffer.py --count 200
 ```
 
-By default, events are written to:
-
-```text
-data/events.json
-```
-
-## Configure Firewall Rules
-
-Edit `config/firewall_rules.json`.
-
-Important fields:
-
-- `blocked_protocols` blocks complete protocols such as `ICMP`.
-- `blocked_dst_ports` blocks risky destination ports.
-- `alert_dst_ports` creates an alert but still allows analysis to continue.
-- `sensitive_public_dst_ports` blocks public TCP sources that try to reach sensitive services.
-- `blocked_flow_rules` supports exact source IP to destination IP and destination port blocks.
-- `max_packet_size` alerts on oversized packets.
-
-Example flow rule:
-
-```json
-{
-    "src_ip": "203.0.113.10",
-    "dst_ip": "192.168.1.20",
-    "dst_port": 445
-}
-```
-
-## Detection Rules
-
-Edit `config/detection_rules.json`.
-
-Current detections:
-
-- TCP SYN port scan.
-- UDP port sweep.
-- Per-source packet burst.
-- Traffic concentration.
-- High ICMP or Non-IP ratio.
-- Repeated unknown port activity.
-
-## Test
-
-Run the local test suite:
+Save events to another JSON file:
 
 ```powershell
-python -m unittest discover -s tests
+python sniffer.py --events-file json/lab_events.json
 ```
 
-## Notes
+## JSON Files
 
-- `BLOCK` means the monitor recorded a firewall decision. It does not drop the packet at OS level.
-- The old root-level `data_events.json` file is left untouched for historical runs.
-- The default v1.0 event output is `data/events.json`.
+- `json/app_settings.json` - app name, version, packet count, summary interval, and event output file.
+- `json/firewall_rules.json` - blocked ports, alert ports, protocols, sensitive services, and flow rules.
+- `json/detection_rules.json` - thresholds for scan detection, UDP sweep detection, burst detection, and stats warnings.
+- `json/services.json` - known ports, service names, categories, and default severities.
+- `json/events.json` - generated security events from the latest run.
+- `json/data_events.json` - older saved event data.
+
+## Push to GitHub
+
+After editing the project, commit and push it:
+
+```powershell
+git add .
+git commit -m "Add basic firewall GUI"
+git push
+```
+
+If this is a new GitHub repository:
+
+```powershell
+git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPOSITORY.git
+git branch -M main
+git push -u origin main
+```
+
+## Important Note
+
+`BLOCK` means the project recorded a firewall decision inside the monitor. It does not install Windows firewall rules and does not drop packets at the operating-system level.
