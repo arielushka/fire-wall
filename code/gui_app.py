@@ -1,134 +1,277 @@
-﻿import json
+import json
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
 from scapy.all import sniff
 
-from firewall import FirewallMonitor, load_json
+from config_loader import load_app_settings, load_json_config
+from sniffer_app import NetworkFirewallApp
 
 
-class FireWallGui:
+class FirewallGui:
     def __init__(self, root):
         self.root = root
-        self.root.title("Fire Wall")
-        self.root.geometry("820x520")
-
-        self.monitor = None
-        self.thread = None
+        self.settings = load_app_settings()
+        self.app = None
+        self.capture_thread = None
         self.stop_capture = threading.Event()
-        self.seen_events = set()
+        self.displayed_event_ids = set()
 
-        self.count_var = tk.StringVar(value="200")
+        self.count_var = tk.StringVar(value=str(self.settings["packet_count"]))
         self.status_var = tk.StringVar(value="Ready")
+        self.packets_var = tk.StringVar(value="0")
+        self.allowed_var = tk.StringVar(value="0")
+        self.blocked_var = tk.StringVar(value="0")
+        self.alerts_var = tk.StringVar(value="0")
+        self.events_var = tk.StringVar(value="0")
 
-        self.build_screen()
-        self.show_rules()
+        self.build_window()
+        self.refresh_rules()
 
-    def build_screen(self):
-        top = ttk.Frame(self.root, padding=10)
-        top.pack(fill="x")
+    def build_window(self):
+        self.root.title("Fire Wall")
+        self.root.geometry("920x620")
+        self.root.minsize(760, 520)
 
-        ttk.Label(top, text="Packets").pack(side="left")
-        ttk.Entry(top, textvariable=self.count_var, width=8).pack(side="left", padx=6)
-        ttk.Button(top, text="Start", command=self.start).pack(side="left", padx=4)
-        ttk.Button(top, text="Stop", command=self.stop).pack(side="left", padx=4)
-        ttk.Label(top, textvariable=self.status_var).pack(side="right")
+        toolbar = ttk.Frame(self.root, padding=12)
+        toolbar.pack(fill="x")
+
+        ttk.Label(toolbar, text="Packets").pack(side="left")
+        ttk.Entry(toolbar, textvariable=self.count_var, width=10).pack(
+            side="left",
+            padx=(6, 12),
+        )
+        ttk.Button(toolbar, text="Start", command=self.start_capture).pack(
+            side="left",
+            padx=4,
+        )
+        ttk.Button(toolbar, text="Stop", command=self.stop_running_capture).pack(
+            side="left",
+            padx=4,
+        )
+        ttk.Label(toolbar, textvariable=self.status_var).pack(side="right")
 
         tabs = ttk.Notebook(self.root)
-        tabs.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        tabs.pack(fill="both", expand=True, padx=12, pady=(0, 12))
 
-        self.summary_box = tk.Text(tabs, wrap="word")
-        self.events_box = tk.Text(tabs, wrap="word")
-        self.rules_box = tk.Text(tabs, wrap="none")
+        dashboard_tab = ttk.Frame(tabs, padding=12)
+        events_tab = ttk.Frame(tabs, padding=12)
+        rules_tab = ttk.Frame(tabs, padding=12)
 
-        tabs.add(self.summary_box, text="Summary")
-        tabs.add(self.events_box, text="Events")
-        tabs.add(self.rules_box, text="Rules")
+        tabs.add(dashboard_tab, text="Dashboard")
+        tabs.add(events_tab, text="Events")
+        tabs.add(rules_tab, text="Rules")
 
-        self.write_box(self.summary_box, "Press Start to capture packets.")
+        self.build_dashboard(dashboard_tab)
+        self.build_events(events_tab)
+        self.build_rules(rules_tab)
 
-    def start(self):
-        if self.thread and self.thread.is_alive():
-            messagebox.showinfo("Fire Wall", "Capture is already running.")
+    def build_dashboard(self, parent):
+        counters = ttk.Frame(parent)
+        counters.pack(fill="x")
+
+        self.add_counter(counters, "Packets", self.packets_var)
+        self.add_counter(counters, "Allowed", self.allowed_var)
+        self.add_counter(counters, "Blocked", self.blocked_var)
+        self.add_counter(counters, "Alerts", self.alerts_var)
+        self.add_counter(counters, "Events", self.events_var)
+
+        self.summary_text = tk.Text(parent, height=16, wrap="word")
+        self.summary_text.pack(fill="both", expand=True, pady=(16, 0))
+        self.summary_text.insert(tk.END, "Start a capture to see results.")
+        self.summary_text.config(state="disabled")
+
+    def add_counter(self, parent, label, variable):
+        frame = ttk.LabelFrame(parent, text=label, padding=10)
+        frame.pack(side="left", fill="x", expand=True, padx=4)
+        ttk.Label(frame, textvariable=variable, font=("Segoe UI", 18, "bold")).pack()
+
+    def build_events(self, parent):
+        columns = ("time", "severity", "action", "type", "flow", "message")
+        self.events_table = ttk.Treeview(parent, columns=columns, show="headings")
+
+        widths = {
+            "time": 140,
+            "severity": 80,
+            "action": 90,
+            "type": 150,
+            "flow": 180,
+            "message": 300,
+        }
+        for column in columns:
+            self.events_table.heading(column, text=column.title())
+            self.events_table.column(column, width=widths[column], anchor="w")
+
+        scrollbar = ttk.Scrollbar(
+            parent,
+            orient="vertical",
+            command=self.events_table.yview,
+        )
+        self.events_table.configure(yscrollcommand=scrollbar.set)
+        self.events_table.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+    def build_rules(self, parent):
+        ttk.Button(parent, text="Refresh Rules", command=self.refresh_rules).pack(
+            anchor="w",
+            pady=(0, 8),
+        )
+        self.rules_text = tk.Text(parent, wrap="none")
+        self.rules_text.pack(fill="both", expand=True)
+
+    def start_capture(self):
+        if self.capture_thread and self.capture_thread.is_alive():
+            messagebox.showinfo("Capture running", "A capture is already running.")
             return
 
         try:
-            count = int(self.count_var.get())
+            packet_count = int(self.count_var.get())
+            if packet_count < 1:
+                raise ValueError
         except ValueError:
-            messagebox.showerror("Fire Wall", "Packet count must be a number.")
+            messagebox.showerror("Invalid count", "Packet count must be a positive number.")
             return
 
-        self.monitor = FirewallMonitor()
-        self.seen_events.clear()
         self.stop_capture.clear()
+        self.displayed_event_ids.clear()
+        self.clear_events_table()
+
+        settings = dict(self.settings)
+        settings["packet_count"] = packet_count
+        settings["summary_interval"] = 0
+        self.app = NetworkFirewallApp(settings)
         self.status_var.set("Capturing...")
-        self.write_box(self.events_box, "")
-        self.update_screen()
+        self.refresh_dashboard()
 
-        self.thread = threading.Thread(target=self.capture, args=(count,), daemon=True)
-        self.thread.start()
+        self.capture_thread = threading.Thread(
+            target=self.capture_packets,
+            args=(packet_count,),
+            daemon=True,
+        )
+        self.capture_thread.start()
 
-    def capture(self, count):
+    def capture_packets(self, packet_count):
         try:
             sniff(
                 prn=self.handle_packet,
                 store=False,
-                count=count,
+                count=packet_count,
                 stop_filter=lambda packet: self.stop_capture.is_set(),
             )
-            self.root.after(0, lambda: self.status_var.set("Done"))
+            self.root.after(0, lambda: self.status_var.set("Finished"))
         except Exception as error:
-            self.root.after(0, lambda error=error: messagebox.showerror("Capture error", str(error)))
-            self.root.after(0, lambda: self.status_var.set("Error"))
+            self.root.after(0, lambda error=error: self.show_capture_error(error))
+        finally:
+            self.root.after(0, self.refresh_dashboard)
 
     def handle_packet(self, packet):
-        self.monitor.handle_packet(packet)
-        self.root.after(0, self.update_screen)
+        self.app.handle_packet(packet)
+        self.root.after(0, self.refresh_dashboard)
 
-    def stop(self):
+    def stop_running_capture(self):
         self.stop_capture.set()
-        self.status_var.set("Stopping...")
+        self.status_var.set("Stopping after next packet...")
 
-    def update_screen(self):
-        if not self.monitor:
+    def refresh_dashboard(self):
+        if not self.app:
             return
 
-        self.write_box(self.summary_box, self.monitor.summary_text())
+        self.packets_var.set(str(self.app.stats.get_total_packets()))
+        self.allowed_var.set(str(self.app.firewall.allowed_count))
+        self.blocked_var.set(str(self.app.firewall.blocked_count))
+        self.alerts_var.set(str(self.app.firewall.alert_count))
+        self.events_var.set(str(len(self.app.events.events)))
+        self.refresh_event_table()
+        self.refresh_summary_text()
 
-        lines = []
-        for event in self.monitor.events:
-            if event["id"] in self.seen_events:
+    def refresh_event_table(self):
+        for event in self.app.events.events:
+            if event.event_id in self.displayed_event_ids:
                 continue
-            self.seen_events.add(event["id"])
-            lines.append(
-                f"{event['time']} | {event['severity']} | {event['type']} | {event['message']}"
+
+            flow = f"{event.src_ip or '-'} -> {event.dst_ip or '-'}"
+            self.events_table.insert(
+                "",
+                "end",
+                values=(
+                    event.time,
+                    event.severity,
+                    event.action,
+                    event.event_type,
+                    flow,
+                    event.message,
+                ),
             )
+            self.displayed_event_ids.add(event.event_id)
 
-        if lines:
-            self.events_box.insert(tk.END, "\n".join(lines) + "\n")
+    def refresh_summary_text(self):
+        lines = [
+            f"Packets checked: {self.app.stats.get_total_packets()}",
+            f"Allowed: {self.app.firewall.allowed_count}",
+            f"Blocked: {self.app.firewall.blocked_count}",
+            f"Alerts: {self.app.firewall.alert_count}",
+            f"Events file: {self.settings['event_output_file']}",
+            "",
+            "Top blocked reasons:",
+        ]
 
-    def show_rules(self):
-        files = ["app_settings.json", "firewall_rules.json", "detection_rules.json", "services.json"]
-        text = []
-        for name in files:
-            text.append(name)
-            text.append("-" * len(name))
-            text.append(json.dumps(load_json(name), indent=4))
-            text.append("")
-        self.write_box(self.rules_box, "\n".join(text))
+        lines.extend(self.format_reason_counts(self.app.firewall.blocked_reasons))
+        lines.append("")
+        lines.append("Top alert reasons:")
+        lines.extend(self.format_reason_counts(self.app.firewall.alert_reasons))
 
-    def write_box(self, box, text):
-        box.delete("0.0 + 1 lines", tk.END)
-        box.insert(tk.END, text)
+        self.summary_text.config(state="normal")
+        self.summary_text.delete("0.0 + 1 lines", tk.END)
+        self.summary_text.insert(tk.END, "\n".join(lines))
+        self.summary_text.config(state="disabled")
+
+    def format_reason_counts(self, reasons):
+        if not reasons:
+            return ["None"]
+
+        sorted_reasons = sorted(
+            reasons.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        return [f"- {count} x {reason}" for reason, count in sorted_reasons[:8]]
+
+    def refresh_rules(self):
+        rule_files = [
+            "app_settings.json",
+            "firewall_rules.json",
+            "detection_rules.json",
+            "services.json",
+        ]
+        sections = []
+
+        for file_name in rule_files:
+            data = load_json_config(file_name)
+            sections.append(f"{file_name}\n{'=' * len(file_name)}")
+            sections.append(json.dumps(data, indent=4, ensure_ascii=False))
+
+        if hasattr(self, "rules_text"):
+            self.rules_text.delete("0.0 + 1 lines", tk.END)
+            self.rules_text.insert(tk.END, "\n\n".join(sections))
+
+    def clear_events_table(self):
+        for item in self.events_table.get_children():
+            self.events_table.delete(item)
+
+    def show_capture_error(self, error):
+        self.status_var.set("Error")
+        messagebox.showerror(
+            "Capture error",
+            f"{error}\n\nTry running as Administrator and make sure Npcap is installed.",
+        )
 
 
 def main():
     root = tk.Tk()
-    FireWallGui(root)
+    FirewallGui(root)
     root.mainloop()
 
 
 if __name__ == "__main__":
     main()
-
