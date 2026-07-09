@@ -30,7 +30,6 @@ class NetworkFirewallApp:
         self.events = EventManager(
             output_file=resolve_project_path(settings["event_output_file"]),
             app_name=settings["app_name"],
-            version=settings["version"],
         )
         self.firewall = FirewallManager(services=self.services)
         self.firewall.load_default_rules()
@@ -106,7 +105,7 @@ class NetworkFirewallApp:
 
     def print_banner(self):
         print("=" * 64)
-        print(f"{self.settings['app_name']} v{self.settings['version']}")
+        print(self.settings["app_name"])
         print("=" * 64)
         print(f"Capturing {self.settings['packet_count']} packets. Press Ctrl+C to stop.")
         print(f"Summary prints every {self.settings['summary_interval']} packets.")
@@ -137,7 +136,7 @@ class NetworkFirewallApp:
 def parse_args():
     settings = load_app_settings()
     parser = argparse.ArgumentParser(
-        description="Anti Virus Network Firewall v1.0 packet monitor"
+        description="Fire Wall packet monitor"
     )
     parser.add_argument(
         "--count",

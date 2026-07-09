@@ -21,8 +21,7 @@ def load_json_config(file_name, default=None):
 
 def load_app_settings():
     defaults = {
-        "app_name": "Anti Virus Network Firewall",
-        "version": "1.0.0",
+        "app_name": "Fire Wall",
         "packet_count": 200,
         "summary_interval": 200,
         "event_output_file": "json/events.json",

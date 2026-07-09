@@ -30,7 +30,7 @@ class FirewallGui:
         self.refresh_rules()
 
     def build_window(self):
-        self.root.title("Anti Virus Network Firewall")
+        self.root.title("Fire Wall")
         self.root.geometry("920x620")
         self.root.minsize(760, 520)
 
@@ -79,7 +79,7 @@ class FirewallGui:
 
         self.summary_text = tk.Text(parent, height=16, wrap="word")
         self.summary_text.pack(fill="both", expand=True, pady=(16, 0))
-        self.summary_text.insert("1.0", "Start a capture to see results.")
+        self.summary_text.insert(tk.END, "Start a capture to see results.")
         self.summary_text.config(state="disabled")
 
     def add_counter(self, parent, label, variable):
@@ -222,8 +222,8 @@ class FirewallGui:
         lines.extend(self.format_reason_counts(self.app.firewall.alert_reasons))
 
         self.summary_text.config(state="normal")
-        self.summary_text.delete("1.0", "end")
-        self.summary_text.insert("1.0", "\n".join(lines))
+        self.summary_text.delete("0.0 + 1 lines", tk.END)
+        self.summary_text.insert(tk.END, "\n".join(lines))
         self.summary_text.config(state="disabled")
 
     def format_reason_counts(self, reasons):
@@ -252,8 +252,8 @@ class FirewallGui:
             sections.append(json.dumps(data, indent=4, ensure_ascii=False))
 
         if hasattr(self, "rules_text"):
-            self.rules_text.delete("1.0", "end")
-            self.rules_text.insert("1.0", "\n\n".join(sections))
+            self.rules_text.delete("0.0 + 1 lines", tk.END)
+            self.rules_text.insert(tk.END, "\n\n".join(sections))
 
     def clear_events_table(self):
         for item in self.events_table.get_children():
