@@ -12,30 +12,31 @@ from threat_detector import ThreatDetector
 
 
 def load_services():
-    raw_services = load_json_config("services.json")
-    return {int(port): info for port, info in raw_services.items()}
+    services = load_json_config("services.json")
+    return {int(port): info for port, info in services.items()}
 
 
 class NetworkFirewallApp:
     def __init__(self, settings):
         self.settings = settings
         self.services = load_services()
-        self.detection_config = load_json_config("detection_rules.json")
+        self.detection_rules = load_json_config("detection_rules.json")
 
         self.stats = StatsManager(
             services=self.services,
-            warning_config=self.detection_config.get("stats_warnings", {}),
+            warning_config=self.detection_rules.get("stats_warnings", {}),
         )
-        self.threat_detector = ThreatDetector(self.detection_config)
+        self.firewall = FirewallManager(services=self.services)
+        self.threat_detector = ThreatDetector(self.detection_rules)
         self.events = EventManager(
             output_file=resolve_project_path(settings["event_output_file"]),
             app_name=settings["app_name"],
         )
-        self.firewall = FirewallManager(services=self.services)
+
         self.firewall.load_default_rules()
 
     def run(self):
-        self.print_banner()
+        self.print_start_message()
         try:
             sniff(
                 prn=self.handle_packet,
@@ -43,21 +44,19 @@ class NetworkFirewallApp:
                 count=self.settings["packet_count"],
             )
         except KeyboardInterrupt:
-            print()
-            print("Capture stopped by user.")
+            print("\nCapture stopped by user.")
 
-        self.print_finished()
+        self.print_final_report()
 
     def handle_packet(self, packet):
         packet_info = parse_packet(packet)
         self.update_stats(packet_info)
 
         firewall_result = self.firewall.check_packet(packet_info)
-        security_events = self.detect_security_events(packet_info, firewall_result)
-        self.events.add_events(security_events)
+        new_events = self.find_events(packet_info, firewall_result)
+        self.events.add_events(new_events)
 
-        summary_interval = self.settings["summary_interval"]
-        if summary_interval > 0 and self.stats.get_total_packets() % summary_interval == 0:
+        if self.should_print_summary():
             self.stats.print_summary()
 
     def update_stats(self, packet_info):
@@ -67,24 +66,23 @@ class NetworkFirewallApp:
         if packet_info["src_ip"] and packet_info["dst_ip"]:
             self.stats.update_ip_counts(packet_info["src_ip"], packet_info["dst_ip"])
 
-        self.update_optional_port(packet_info["src_port"], self.stats.update_src_port)
-        self.update_optional_port(packet_info["dst_port"], self.stats.update_dst_port)
+        if packet_info["src_port"] is not None:
+            self.stats.update_src_port(packet_info["src_port"])
 
-    def update_optional_port(self, port, update_callback):
-        if port is not None:
-            update_callback(port)
+        if packet_info["dst_port"] is not None:
+            self.stats.update_dst_port(packet_info["dst_port"])
 
-    def detect_security_events(self, packet_info, firewall_result):
-        events_found = []
+    def find_events(self, packet_info, firewall_result):
+        events = []
 
         if firewall_result.action in ("BLOCK", "ALERT"):
-            events_found.append(self.build_firewall_event(packet_info, firewall_result))
+            events.append(self.build_firewall_event(packet_info, firewall_result))
 
         if firewall_result.action != "BLOCK":
-            events_found.extend(self.threat_detector.analyze_packet(packet_info))
+            events.extend(self.threat_detector.analyze_packet(packet_info))
 
-        events_found.extend(self.stats.build_warning_events())
-        return events_found
+        events.extend(self.stats.build_warning_events())
+        return events
 
     def build_firewall_event(self, packet_info, firewall_result):
         return SecurityEvent(
@@ -103,7 +101,12 @@ class NetworkFirewallApp:
             },
         )
 
-    def print_banner(self):
+    def should_print_summary(self):
+        interval = self.settings["summary_interval"]
+        total_packets = self.stats.get_total_packets()
+        return interval > 0 and total_packets % interval == 0
+
+    def print_start_message(self):
         print("=" * 64)
         print(self.settings["app_name"])
         print("=" * 64)
@@ -111,51 +114,32 @@ class NetworkFirewallApp:
         print(f"Summary prints every {self.settings['summary_interval']} packets.")
         print(f"Events file: {self.settings['event_output_file']}")
 
-    def print_finished(self):
-        print()
-        print("=" * 64)
+    def print_final_report(self):
+        print("\n" + "=" * 64)
         print("Capture Finished")
         print("=" * 64)
 
-        total_packets = self.stats.get_total_packets()
-        summary_interval = self.settings["summary_interval"]
-        summary_already_printed = (
-            summary_interval > 0
-            and total_packets > 0
-            and total_packets % summary_interval == 0
-        )
-
-        if not summary_already_printed:
+        if not self.summary_was_just_printed():
             self.stats.print_summary()
 
         self.firewall.print_summary()
         self.events.print_events()
         self.events.print_severity_summary()
 
+    def summary_was_just_printed(self):
+        interval = self.settings["summary_interval"]
+        total_packets = self.stats.get_total_packets()
+        return interval > 0 and total_packets > 0 and total_packets % interval == 0
+
 
 def parse_args():
     settings = load_app_settings()
-    parser = argparse.ArgumentParser(
-        description="Fire Wall packet monitor"
-    )
-    parser.add_argument(
-        "--count",
-        type=int,
-        default=settings["packet_count"],
-        help="number of packets to capture",
-    )
-    parser.add_argument(
-        "--summary-interval",
-        type=int,
-        default=settings["summary_interval"],
-        help="print a traffic summary every N packets",
-    )
-    parser.add_argument(
-        "--events-file",
-        default=settings["event_output_file"],
-        help="JSON file path for saved security events",
-    )
-    return parser.parse_args(), settings
+    parser = argparse.ArgumentParser(description="Fire Wall packet monitor")
+    parser.add_argument("--count", type=int, default=settings["packet_count"])
+    parser.add_argument("--summary-interval", type=int, default=settings["summary_interval"])
+    parser.add_argument("--events-file", default=settings["event_output_file"])
+    args = parser.parse_args()
+    return args, settings
 
 
 def main():
