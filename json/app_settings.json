@@ -1,0 +1,6 @@
+{
+    "app_name": "Fire Wall",
+    "packet_count": 200,
+    "os_blocking_enabled": true,
+    "event_output_file": "json/events.json"
+}
