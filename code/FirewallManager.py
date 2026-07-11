@@ -9,22 +9,22 @@ class FirewallManager:
         self.firewall_config = firewall_config or load_json_config("firewall_rules.json")
         self.services = services or self.load_services()
 
-        self.blocked_src_ips = set()
-        self.blocked_dst_ips = set()
-        self.blocked_src_ports = set()
-        self.blocked_dst_ports = set()
-        self.blocked_protocols = set()
+        self.flagged_src_ips = set()
+        self.flagged_dst_ips = set()
+        self.flagged_src_ports = set()
+        self.flagged_dst_ports = set()
+        self.flagged_protocols = set()
         self.alerted_dst_ports = set()
-        self.blocked_src_ip_dst_ip_dst_ports = set()
+        self.flagged_flow_rules = set()
         self.sensitive_dst_ports = set()
         self.max_packet_size = self.firewall_config.get("max_packet_size", 1500)
         self.default_action = self.firewall_config.get("default_action", "ALLOW")
 
         # These counters help us print a simple firewall summary.
         self.allowed_count = 0
-        self.blocked_count = 0
+        self.flagged_count = 0
         self.alert_count = 0
-        self.blocked_reasons = {}
+        self.flagged_reasons = {}
         self.alert_reasons = {}
 
     def load_services(self):
@@ -32,58 +32,46 @@ class FirewallManager:
         return {int(port): info for port, info in raw_services.items()}
 
     def load_default_rules(self):
-        self.blocked_src_ips.update(self.firewall_config.get("blocked_src_ips", []))
-        self.blocked_dst_ips.update(self.firewall_config.get("blocked_dst_ips", []))
-        self.blocked_protocols.update(self.firewall_config.get("blocked_protocols", []))
-        self.blocked_src_ports.update(self.to_int_set("blocked_src_ports"))
-        self.blocked_dst_ports.update(self.to_int_set("blocked_dst_ports"))
+        self.flagged_src_ips.update(self.firewall_config.get("flagged_src_ips", []))
+        self.flagged_dst_ips.update(self.firewall_config.get("flagged_dst_ips", []))
+        self.flagged_protocols.update(self.firewall_config.get("flagged_protocols", []))
+        self.flagged_src_ports.update(self.to_int_set("flagged_src_ports"))
+        self.flagged_dst_ports.update(self.to_int_set("flagged_dst_ports"))
         self.alerted_dst_ports.update(self.to_int_set("alert_dst_ports"))
         self.sensitive_dst_ports.update(self.to_int_set("sensitive_public_dst_ports"))
-        self.load_flow_rules(self.firewall_config.get("blocked_flow_rules", []))
+        self.load_flow_rules(self.firewall_config.get("flagged_flow_rules", []))
 
     def to_int_set(self, key):
         return {int(value) for value in self.firewall_config.get(key, [])}
 
     def load_flow_rules(self, flow_rules):
         for rule in flow_rules:
-            self.block_src_ip_dst_ip_dst_port(
+            self.flag_flow(
                 rule["src_ip"],
                 rule["dst_ip"],
                 int(rule["dst_port"]),
             )
 
-    def block_src_ip(self, src_ip):
-        self.blocked_src_ips.add(src_ip)
+    def flag_src_ip(self, src_ip):
+        self.flagged_src_ips.add(src_ip)
 
-    def block_ip(self, ip):
-        self.block_src_ip(ip)
+    def flag_dst_ip(self, dst_ip):
+        self.flagged_dst_ips.add(dst_ip)
 
-    def block_dst_ip(self, dst_ip):
-        self.blocked_dst_ips.add(dst_ip)
+    def flag_protocol(self, protocol):
+        self.flagged_protocols.add(protocol)
 
-    def block_protocol(self, protocol):
-        self.blocked_protocols.add(protocol)
+    def flag_src_port(self, port):
+        self.flagged_src_ports.add(port)
 
-    def block_src_port(self, port):
-        self.blocked_src_ports.add(port)
-
-    def block_dst_port(self, port):
-        self.blocked_dst_ports.add(port)
-
-    def unblock_dst_port(self, port):
-        self.blocked_dst_ports.discard(port)
-
-    def unblock_src_port(self, port):
-        self.blocked_src_ports.discard(port)
-
-    def block_port(self, port):
-        self.block_dst_port(port)
+    def flag_dst_port(self, port):
+        self.flagged_dst_ports.add(port)
 
     def alert_dst_port(self, port):
         self.alerted_dst_ports.add(port)
 
-    def block_src_ip_dst_ip_dst_port(self, src_ip, dst_ip, dst_port):
-        self.blocked_src_ip_dst_ip_dst_ports.add((src_ip, dst_ip, dst_port))
+    def flag_flow(self, src_ip, dst_ip, dst_port):
+        self.flagged_flow_rules.add((src_ip, dst_ip, dst_port))
 
     def check_packet(self, packet_info):
         # First decide what the firewall thinks about this packet.
@@ -102,17 +90,17 @@ class FirewallManager:
         src_dst_port_rule = (src_ip, dst_ip, dst_port)
 
         # Exact IP rules are checked first because they are very specific.
-        if src_ip in self.blocked_src_ips:
-            reason = f"Blocked source IP: {src_ip}"
-            return self.build_result("BLOCK", reason, "HIGH")
+        if src_ip in self.flagged_src_ips:
+            reason = f"Flagged source IP: {src_ip}"
+            return self.build_result("FLAG", reason, "HIGH")
 
-        if dst_ip in self.blocked_dst_ips:
-            reason = f"Blocked destination IP: {dst_ip}"
-            return self.build_result("BLOCK", reason, "HIGH")
+        if dst_ip in self.flagged_dst_ips:
+            reason = f"Flagged destination IP: {dst_ip}"
+            return self.build_result("FLAG", reason, "HIGH")
 
-        if src_dst_port_rule in self.blocked_src_ip_dst_ip_dst_ports:
-            reason = f"Blocked flow rule: {src_ip} -> {dst_ip}:{dst_port}"
-            return self.build_result("BLOCK", reason, "HIGH")
+        if src_dst_port_rule in self.flagged_flow_rules:
+            reason = f"Flagged flow rule: {src_ip} -> {dst_ip}:{dst_port}"
+            return self.build_result("FLAG", reason, "HIGH")
 
         is_sensitive_service = dst_port in self.sensitive_dst_ports
         is_tcp = protocol == "TCP"
@@ -125,25 +113,25 @@ class FirewallManager:
                 f"{service_name}: {dst_port}"
             )
             severity = self.get_dst_port_severity(dst_port)
-            return self.build_result("BLOCK", reason, severity)
+            return self.build_result("FLAG", reason, severity)
 
-        if protocol in self.blocked_protocols:
+        if protocol in self.flagged_protocols:
             severity = "MEDIUM"
             if protocol == "ICMP":
                 severity = "LOW"
 
-            reason = f"Blocked protocol: {protocol}"
-            return self.build_result("BLOCK", reason, severity)
+            reason = f"Flagged protocol: {protocol}"
+            return self.build_result("FLAG", reason, severity)
 
-        if src_port in self.blocked_src_ports:
-            reason = f"Blocked source port: {src_port}"
-            return self.build_result("BLOCK", reason, "MEDIUM")
+        if src_port in self.flagged_src_ports:
+            reason = f"Flagged source port: {src_port}"
+            return self.build_result("FLAG", reason, "MEDIUM")
 
-        if dst_port in self.blocked_dst_ports:
+        if dst_port in self.flagged_dst_ports:
             service_name = self.get_service_name(dst_port)
             severity = self.get_dst_port_severity(dst_port)
-            reason = f"Blocked destination port: {dst_port} ({service_name})"
-            return self.build_result("BLOCK", reason, severity)
+            reason = f"Flagged destination port: {dst_port} ({service_name})"
+            return self.build_result("FLAG", reason, severity)
 
         # ALERT means suspicious, but still let the packet continue.
         if packet_size > self.max_packet_size:
@@ -162,10 +150,10 @@ class FirewallManager:
         action = result.action
         reason = result.reason
 
-        if action == "BLOCK":
-            self.blocked_count += 1
-            old_count = self.blocked_reasons.get(reason, 0)
-            self.blocked_reasons[reason] = old_count + 1
+        if action == "FLAG":
+            self.flagged_count += 1
+            old_count = self.flagged_reasons.get(reason, 0)
+            self.flagged_reasons[reason] = old_count + 1
         elif action == "ALERT":
             self.alert_count += 1
             old_count = self.alert_reasons.get(reason, 0)
@@ -198,7 +186,7 @@ class FirewallManager:
         return address.is_global
 
     def print_summary(self):
-        total = self.allowed_count + self.blocked_count + self.alert_count
+        total = self.allowed_count + self.flagged_count + self.alert_count
 
         print()
         print("=" * 64)
@@ -206,26 +194,26 @@ class FirewallManager:
         print("=" * 64)
         print(f"Checked packets : {total}")
         print(f"Allowed packets : {self.allowed_count}")
-        print(f"Blocked packets : {self.blocked_count}")
+        print(f"Flagged packets : {self.flagged_count}")
         print(f"Alerted packets : {self.alert_count}")
 
         self.print_rules()
-        self.print_result_reasons("Blocked Reasons", self.blocked_reasons)
+        self.print_result_reasons("Flagged Reasons", self.flagged_reasons)
         self.print_result_reasons("Alert Reasons", self.alert_reasons)
 
     def print_rules(self):
         print()
         print("Active Firewall Rules")
         print("-" * 64)
-        self.print_rule_set("Blocked source IPs", self.blocked_src_ips)
-        self.print_rule_set("Blocked destination IPs", self.blocked_dst_ips)
-        self.print_rule_set("Blocked source ports", self.blocked_src_ports)
-        self.print_rule_set("Blocked destination ports", self.blocked_dst_ports)
-        self.print_rule_set("Blocked protocols", self.blocked_protocols)
+        self.print_rule_set("Flagged source IPs", self.flagged_src_ips)
+        self.print_rule_set("Flagged destination IPs", self.flagged_dst_ips)
+        self.print_rule_set("Flagged source ports", self.flagged_src_ports)
+        self.print_rule_set("Flagged destination ports", self.flagged_dst_ports)
+        self.print_rule_set("Flagged protocols", self.flagged_protocols)
         self.print_rule_set("Alert destination ports", self.alerted_dst_ports)
         self.print_rule_set(
-            "Blocked src_ip/dst_ip/dst_port",
-            self.blocked_src_ip_dst_ip_dst_ports,
+            "Flagged src_ip/dst_ip/dst_port",
+            self.flagged_flow_rules,
         )
         print(f"{'Max packet size':<32}: {self.max_packet_size} bytes")
         print(

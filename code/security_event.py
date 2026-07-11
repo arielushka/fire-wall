@@ -5,7 +5,7 @@ from uuid import uuid4
 
 
 VALID_SEVERITIES = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
-VALID_ACTIONS = {"ALLOW", "ALERT", "BLOCK", "INVESTIGATE"}
+VALID_ACTIONS = {"ALLOW", "ALERT", "FLAG", "INVESTIGATE"}
 
 
 @dataclass

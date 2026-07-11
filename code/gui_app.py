@@ -31,7 +31,7 @@ class FirewallGui:
 
         self.packet_total = tk.StringVar(value="0")
         self.allowed_total = tk.StringVar(value="0")
-        self.blocked_total = tk.StringVar(value="0")
+        self.flagged_total = tk.StringVar(value="0")
         self.alert_total = tk.StringVar(value="0")
         self.event_total = tk.StringVar(value="0")
 
@@ -85,7 +85,7 @@ class FirewallGui:
 
         self.add_counter(counters, "Packets", self.packet_total)
         self.add_counter(counters, "Allowed", self.allowed_total)
-        self.add_counter(counters, "Blocked", self.blocked_total)
+        self.add_counter(counters, "Flagged", self.flagged_total)
         self.add_counter(counters, "Alerts", self.alert_total)
         self.add_counter(counters, "Events", self.event_total)
 
@@ -156,8 +156,6 @@ class FirewallGui:
 
         settings = dict(self.settings)
         settings["packet_count"] = packets_to_capture
-        settings["summary_interval"] = 0
-
         self.app = NetworkFirewallApp(settings)
         self.status.set("Capturing...")
         self.refresh_dashboard()
@@ -190,7 +188,7 @@ class FirewallGui:
 
         self.packet_total.set(str(self.app.stats.get_total_packets()))
         self.allowed_total.set(str(self.app.firewall.allowed_count))
-        self.blocked_total.set(str(self.app.firewall.blocked_count))
+        self.flagged_total.set(str(self.app.firewall.flagged_count))
         self.alert_total.set(str(self.app.firewall.alert_count))
         self.event_total.set(str(len(self.app.events.events)))
 
@@ -221,12 +219,12 @@ class FirewallGui:
         lines = [
             f"Packets checked: {self.app.stats.get_total_packets()}",
             f"Allowed: {self.app.firewall.allowed_count}",
-            f"Blocked: {self.app.firewall.blocked_count}",
+            f"Flagged for review: {self.app.firewall.flagged_count}",
             f"Alerts: {self.app.firewall.alert_count}",
             f"Events file: {self.settings['event_output_file']}",
             "",
-            "Top blocked reasons:",
-            *self.reason_lines(self.app.firewall.blocked_reasons),
+            "Top flagged reasons:",
+            *self.reason_lines(self.app.firewall.flagged_reasons),
             "",
             "Top alert reasons:",
             *self.reason_lines(self.app.firewall.alert_reasons),

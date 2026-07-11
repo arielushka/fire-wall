@@ -23,7 +23,6 @@ def load_app_settings():
     defaults = {
         "app_name": "Fire Wall",
         "packet_count": 200,
-        "summary_interval": 200,
         "event_output_file": "json/events.json",
     }
     settings = load_json_config("app_settings.json", defaults)

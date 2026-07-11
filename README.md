@@ -1,13 +1,13 @@
 # Fire Wall
 
-Fire Wall is a simple Python program I built to learn how network traffic works.
-It can capture packets, check basic firewall rules, show results in a small GUI, and save events to JSON.
+Fire Wall is a simple Python network traffic monitor. It captures packets, checks
+them against detection rules, shows the results in a small GUI, and saves security
+events to JSON.
 
 ## Features
 
 - Basic desktop GUI
-- CLI packet capture mode
-- JSON firewall rules
+- JSON traffic rules
 - JSON detection settings
 - Security events saved to `json/events.json`
 - TCP SYN scan detection
@@ -19,22 +19,7 @@ It can capture packets, check basic firewall rules, show results in a small GUI,
 ```text
 code/      Python source code
 json/      settings, rules, services, and event output
-git/       project git notes
 gui.py     GUI launcher
-sniffer.py CLI launcher
-```
-
-## Requirements
-
-- Python 3.9 or newer
-- Scapy
-- Npcap on Windows
-- Administrator/root permissions may be required for packet capture
-
-Npcap download:
-
-```text
-https://npcap.com/
 ```
 
 ## Installation
@@ -47,26 +32,32 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-## Run GUI
+## Run the project
+
+Start the graphical interface:
 
 ```powershell
 python gui.py
 ```
 
-## Run CLI
-
-```powershell
-python sniffer.py --count 200
-```
+Enter the number of packets to capture, click **Start**, and use **Stop** to end
+the capture after the next packet arrives. The dashboard shows allowed, flagged,
+and alert counts. Flagged means that a packet matched a configured traffic rule;
+it does not mean the operating system dropped the packet.
 
 ## JSON Files
 
 - `json/app_settings.json` - app settings
-- `json/firewall_rules.json` - firewall rules
+- `json/firewall_rules.json` - rules used to flag or alert on traffic
 - `json/detection_rules.json` - detection thresholds
 - `json/services.json` - known services and ports
 - `json/events.json` - generated events
 
-## Note
+## Traffic decisions
 
-`BLOCK` is a decision inside this monitor. It does not change Windows Firewall rules and does not drop packets at the operating-system level.
+- `ALLOW` means no configured rule matched.
+- `ALERT` means the packet matched a lower-priority warning rule.
+- `FLAG` means the packet matched a traffic rule that should be reviewed.
+
+The project is a monitor and detector. It does not create operating-system
+firewall rules or claim that flagged packets were blocked.

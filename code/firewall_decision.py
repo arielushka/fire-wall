@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 
-VALID_FIREWALL_ACTIONS = {"ALLOW", "ALERT", "BLOCK"}
+VALID_FIREWALL_ACTIONS = {"ALLOW", "ALERT", "FLAG"}
 
 
 @dataclass
