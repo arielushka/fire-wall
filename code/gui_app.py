@@ -23,7 +23,7 @@ class FirewallGui:
         self.settings = load_app_settings()
         self.app = None
         self.capture_thread = None
-        self.stop_capture = threading.Event()
+        self.stop_capture_event = threading.Event()
         self.event_ids_on_screen = set()
 
         self.packet_count = tk.StringVar(value=str(self.settings["packet_count"]))
@@ -183,7 +183,7 @@ class FirewallGui:
         self.capture_thread.start()
 
     def prepare_new_capture(self, packets_to_capture):
-        self.stop_capture.clear()
+        self.stop_capture_event.clear()
         self.event_ids_on_screen.clear()
         self.clear_events_table()
 
@@ -202,7 +202,7 @@ class FirewallGui:
     def capture_packets(self, packet_count, interface):
         try:
             while (
-                not self.stop_capture.is_set()
+                not self.stop_capture_event.is_set()
                 and (
                     packet_count is None
                     or self.app.stats.get_total_packets() < packet_count
@@ -219,7 +219,7 @@ class FirewallGui:
                     timeout=1,
                 )
 
-            final_status = "Stopped" if self.stop_capture.is_set() else "Finished"
+            final_status = "Stopped" if self.stop_capture_event.is_set() else "Finished"
             self.root.after(0, lambda: self.status.set(final_status))
         except Exception as error:
             self.root.after(0, lambda error=error: self.show_capture_error(error))
@@ -231,7 +231,7 @@ class FirewallGui:
         self.root.after(0, self.refresh_dashboard)
 
     def stop_capture(self):
-        self.stop_capture.set()
+        self.stop_capture_event.set()
         self.status.set("Stopping...")
 
     def load_interfaces(self):
