@@ -8,7 +8,6 @@ from scapy.all import conf, sniff
 from config_loader import load_app_settings, load_json_config
 from sniffer_app import NetworkFirewallApp
 
-
 RULE_FILES = [
     "app_settings.json",
     "firewall_rules.json",
@@ -32,7 +31,7 @@ class FirewallGui:
         self.status = tk.StringVar(value="Ready")
 
         self.packet_total = tk.StringVar(value="0")
-        self.allowed_total = tk.StringVar(value="0")
+        self.clean_total = tk.StringVar(value="0")
         self.flagged_total = tk.StringVar(value="0")
         self.blocked_total = tk.StringVar(value="0")
         self.alert_total = tk.StringVar(value="0")
@@ -85,7 +84,9 @@ class FirewallGui:
             side="left",
             padx=4,
         )
-        ttk.Button(toolbar, text="Continuous", command=self.start_continuous_capture).pack(
+        ttk.Button(
+            toolbar, text="Continuous", command=self.start_continuous_capture
+        ).pack(
             side="left",
             padx=4,
         )
@@ -100,7 +101,7 @@ class FirewallGui:
         counters.pack(fill="x")
 
         self.add_counter(counters, "Packets", self.packet_total)
-        self.add_counter(counters, "Allowed", self.allowed_total)
+        self.add_counter(counters, "Clean", self.clean_total)
         self.add_counter(counters, "Flagged", self.flagged_total)
         self.add_counter(counters, "Blocked IPs", self.blocked_total)
         self.add_counter(counters, "Alerts", self.alert_total)
@@ -132,7 +133,9 @@ class FirewallGui:
             self.events_table.heading(column, text=column.title())
             self.events_table.column(column, width=widths[column], anchor="w")
 
-        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=self.events_table.yview)
+        scrollbar = ttk.Scrollbar(
+            parent, orient="vertical", command=self.events_table.yview
+        )
         self.events_table.configure(yscrollcommand=scrollbar.set)
         self.events_table.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -201,12 +204,9 @@ class FirewallGui:
 
     def capture_packets(self, packet_count, interface):
         try:
-            while (
-                not self.stop_capture_event.is_set()
-                and (
-                    packet_count is None
-                    or self.app.stats.get_total_packets() < packet_count
-                )
+            while not self.stop_capture_event.is_set() and (
+                packet_count is None
+                or self.app.stats.get_total_packets() < packet_count
             ):
                 remaining = 0
                 if packet_count is not None:
@@ -262,7 +262,7 @@ class FirewallGui:
             return
 
         self.packet_total.set(str(self.app.stats.get_total_packets()))
-        self.allowed_total.set(str(self.app.firewall.allowed_count))
+        self.clean_total.set(str(self.app.firewall.clean_count))
         self.flagged_total.set(str(self.app.firewall.flagged_count))
         self.blocked_total.set(str(self.app.os_firewall.blocked_count))
         self.alert_total.set(str(self.app.firewall.alert_count))
@@ -294,7 +294,7 @@ class FirewallGui:
     def show_summary(self):
         lines = [
             f"Packets checked: {self.app.stats.get_total_packets()}",
-            f"Allowed: {self.app.firewall.allowed_count}",
+            f"Clean: {self.app.firewall.clean_count}",
             f"Flagged for review: {self.app.firewall.flagged_count}",
             f"IPs blocked by Windows Firewall: {self.app.os_firewall.blocked_count}",
             f"Alerts: {self.app.firewall.alert_count}",
