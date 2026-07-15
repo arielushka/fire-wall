@@ -66,7 +66,7 @@ adapter and open a website to create traffic.
 ## Dashboard
 
 - **Packets** is the total number of captured packets.
-- **Allowed** means no traffic rule matched.
+- **clean** means no traffic rule matched.
 - **Flagged** means a packet matched a rule that should be reviewed.
 - **Blocked IPs** counts source IPs with a real Windows Firewall rule.
 - **Alerts** counts lower-priority firewall alerts.
